@@ -1,0 +1,42 @@
+modes:
+  IDLE:
+    motion_enabled: false
+    autonomy_enabled: false
+  READY:
+    motion_enabled: true
+    autonomy_enabled: false
+  TELEOP:
+    motion_enabled: true
+    autonomy_enabled: false
+  NAVIGATION:
+    motion_enabled: true
+    autonomy_enabled: true
+  PATROL:
+    motion_enabled: true
+    autonomy_enabled: true
+  SECURITY:
+    motion_enabled: true
+    autonomy_enabled: true
+  DOCKING:
+    motion_enabled: true
+    autonomy_enabled: true
+  SAFE_STOP:
+    motion_enabled: false
+    autonomy_enabled: false
+    lock: true
+  FAULT:
+    motion_enabled: false
+    autonomy_enabled: false
+    lock: true
+
+transitions:
+  IDLE: [READY]
+  READY: [IDLE, TELEOP, NAVIGATION, PATROL, SECURITY, DOCKING]
+  TELEOP: [READY]
+  NAVIGATION: [READY, SAFE_STOP, FAULT]
+  PATROL: [READY, DOCKING, SAFE_STOP, FAULT]
+  SECURITY: [READY, SAFE_STOP, FAULT]
+  DOCKING: [READY, SAFE_STOP, FAULT]
+  SAFE_STOP: [READY]
+  FAULT: [READY]
+

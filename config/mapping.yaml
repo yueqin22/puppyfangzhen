@@ -1,0 +1,23 @@
+# 建图配置 (gaijin1.md section 7.1)
+mapping:
+  # OccupancyGrid参数
+  grid_resolution: 0.1        # 米/格
+  grid_width: 100             # 格数
+  grid_height: 80
+  origin_x: -5.0
+  origin_y: -4.0
+
+  # LiDAR参数
+  lidar_num_rays: 72
+  lidar_max_range: 8.0
+  lidar_margin: 0.0           # inflation处理安全裕度，不重复计算
+
+  # Log-odds更新
+  log_odds_hit: 0.85
+  log_odds_miss: -0.4
+  log_odds_min: -2.0
+  log_odds_max: 3.5
+
+  # 前沿检测
+  frontier_min_cluster_size: 3
+  frontier_max_candidates: 15

@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<robot name="puppy" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Include all xacro files -->
+  <xacro:include filename="$(find puppy_description)/urdf/materials.xacro"/>
+  <xacro:include filename="$(find puppy_description)/urdf/macros.xacro"/>
+  <xacro:include filename="$(find puppy_description)/urdf/torso.xacro"/>
+  <xacro:include filename="$(find puppy_description)/urdf/leg.xacro"/>
+  <xacro:include filename="$(find puppy_description)/urdf/sensors.xacro"/>
+  <xacro:include filename="$(find puppy_description)/urdf/gazebo_control.xacro"/>
+
+  <!-- Robot parameters -->
+  <xacro:property name="body_length" value="0.40"/>
+  <xacro:property name="body_width" value="0.22"/>
+  <xacro:property name="body_height" value="0.12"/>
+  <xacro:property name="body_mass" value="8.0"/>
+
+  <xacro:property name="L1" value="0.20"/>
+  <xacro:property name="L2" value="0.20"/>
+  <xacro:property name="thigh_radius" value="0.03"/>
+  <xacro:property name="thigh_length" value="${L1}"/>
+  <xacro:property name="calf_radius" value="0.025"/>
+  <xacro:property name="calf_length" value="${L2}"/>
+  <xacro:property name="hip_radius" value="0.04"/>
+  <xacro:property name="hip_length" value="0.06"/>
+  <xacro:property name="leg_mass" value="0.8"/>
+
+  <xacro:property name="stand_height" value="0.28"/>
+
+  <!-- Build the robot -->
+  <xacro:torso/>
+
+  <!-- 4 legs: FR, FL, RR, RL -->
+  <xacro:leg prefix="FR" side="front" y_offset="${-body_width/2 - hip_length/2}"/>
+  <xacro:leg prefix="FL" side="front" y_offset="${body_width/2 + hip_length/2}"/>
+  <xacro:leg prefix="RR" side="rear"  y_offset="${-body_width/2 - hip_length/2}"/>
+  <xacro:leg prefix="RL" side="rear"  y_offset="${body_width/2 + hip_length/2}"/>
+
+  <!-- Sensors -->
+  <xacro:sensors/>
+
+  <!-- Gazebo control -->
+  <xacro:gazebo_control/>
+
+</robot>

@@ -1,0 +1,10 @@
+std_msgs/Header header
+bool ok
+string level
+string[] active_faults
+float32 cpu_temp
+float32 battery_percent
+bool imu_ready
+bool lidar_ready
+bool camera_ready
+bool motion_ready

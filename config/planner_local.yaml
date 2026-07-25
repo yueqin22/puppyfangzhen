@@ -1,0 +1,35 @@
+# 局部规划器配置 (gaijin1.md section 7.1)
+planner_local:
+  # DWA参数
+  algorithm: 'dwa'            # dwa / teb (未来)
+
+  # 速度限制
+  max_linear_x: 0.3           # m/s
+  max_angular_z: 1.2          # rad/s
+  max_accel: 2.0              # m/s^2
+  max_yaw_accel: 4.0          # rad/s^2
+
+  # 采样
+  v_samples: 9
+  w_samples: 15
+  horizon: 2.0                # 预测时域 s
+  dt: 0.1                     # 仿真步长 s
+
+  # 评分权重 (sum=1.0)
+  w_heading: 0.30             # 朝向goal
+  w_clearance: 0.15           # 障碍距离
+  w_velocity: 0.10            # 前进速度
+  w_goal: 0.35                # 接近goal进度
+  w_path: 0.10                # A*路径跟踪
+
+  # ALIGN阶段
+  align_threshold: 0.5        # rad，超过则原地旋转
+  min_rotation_speed: 0.3     # rad/s，克服静摩擦
+
+  # Goal容差
+  goal_tolerance: 0.3         # m
+
+  # 窄通道模式 (gaijin1.md section 6.5，未来实现)
+  narrow_passage_mode: false  # 检测窄通道时切换参数
+  narrow_w_clearance: 0.10
+  narrow_w_path: 0.20

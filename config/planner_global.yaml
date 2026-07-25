@@ -1,0 +1,18 @@
+# 全局规划器配置 (gaijin1.md section 7.1)
+planner_global:
+  # A*参数
+  algorithm: 'astar'          # astar / jps / hybrid_astar (未来)
+  connected: 8                # 4或8连通
+
+  # 代价阈值
+  plan_blocked: 110           # cost>=110视为障碍 (低于COST_INSCRIBED=128)
+  cost_penalty_quadratic: true  # 二次惩罚使高cost cell更昂贵
+  cost_penalty_factor: 8.0
+
+  # 障碍处理
+  block_unknown_cells: true   # 禁止穿越未观测区域
+  block_inflation: true       # 考虑inflation层
+
+  # 路径平滑
+  smooth_path: true
+  smooth_block_unknown: true  # 平滑时不穿越unknown

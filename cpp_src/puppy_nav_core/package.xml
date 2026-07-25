@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>puppy_nav_core</name>
+  <version>1.0.0</version>
+  <description>Core navigation algorithms (C++ port from Python)</description>
+  <maintainer email="dev@puppy.local">puppy_dev</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

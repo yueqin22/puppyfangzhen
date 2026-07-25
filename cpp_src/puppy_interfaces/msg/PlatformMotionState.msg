@@ -1,0 +1,9 @@
+std_msgs/Header header
+bool standing
+bool moving
+bool controllable
+string gait_mode
+float32 linear_x
+float32 linear_y
+float32 angular_z
+string platform_state

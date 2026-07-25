@@ -1,0 +1,26 @@
+# 探索策略配置 (gaijin1.md section 6)
+exploration:
+  # Frontier评分权重 (gaijin1.md 6.2)
+  w_info_gain: 0.30           # 信息增益(frontier大小)
+  w_path_cost: 0.25           # 路径长度代价
+  w_risk: 0.15                # 到达风险(costmap cost)
+  w_heading_change: 0.15      # 朝向切换成本
+  w_retry_penalty: 0.15       # 历史失败惩罚
+
+  # Frontier聚类
+  cluster_merge_radius: 0.5   # 米，frontier合并半径
+  cluster_method: 'dbscan'    # dbscan / union_find (未来)
+
+  # 记忆与持久化
+  visited_ttl: 600            # 帧，已访问frontier屏蔽时长 (v2.9h: 300→60s，避免重复访问)
+  unreachable_radius: 5       # 格，不可达区域空间扩展半径 (v2.9h: 3→0.5m，扩大屏蔽区)
+  max_goal_attempts: 3        # 放弃goal的最大尝试次数
+  max_no_frontier_cycles: 5   # 进入DONE状态的阈值
+
+  # 重复访问惩罚
+  revisit_penalty_radius: 1.0 # 米，重复访问惩罚半径
+  revisit_penalty_weight: 0.35 # 重复访问惩罚权重
+
+  # 不可达检测
+  path_end_threshold: 0.4     # 到达path终点判定
+  goal_far_threshold: 0.6     # goal仍远的判定

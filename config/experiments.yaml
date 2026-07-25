@@ -1,0 +1,96 @@
+# 统一实验配置 (v5.0)
+# 所有实验参数集中管理，支持一键复现
+
+experiment:
+  name: "puppy_navigation_v5"
+  version: "5.0"
+  random_seed: 42
+  max_frames: 4000              # 单次实验帧数上限
+  n_trials: 5                  # 每个配置重复次数
+  output_dir: "ablation_results_v3"
+
+baselines:
+  random_walk:
+    description: "随机游走（下界基准）"
+    class: "RandomWalkBaseline"
+    expected_coverage: 0.55
+  nearest_frontier:
+    description: "最近边界探索 (Yamauchi 1997)"
+    class: "NearestFrontierBaseline"
+    expected_coverage: 0.78
+  greedy_info:
+    description: "贪心信息增益 (Bourgault 2002)"
+    class: "GreedyInformationBaseline"
+    expected_coverage: 0.74
+  oracle:
+    description: "全知最优（理论上界）"
+    class: "OracleBaseline"
+    expected_coverage: 0.96
+
+ablation:
+  full:
+    description: "完整系统"
+    use_aufe: true
+    use_risk_aware: true
+    use_cbf: true
+    use_gnn: true
+    use_amcl: true
+    use_teb: true
+    use_dynamic_obs: true
+  w_o_aufe:
+    description: "无 AUFE 自适应权重"
+    use_aufe: false
+    fixed_weights: [0.4, 0.4, 0.2]
+  w_o_risk_aware:
+    description: "无风险感知 (用标准A*)"
+    use_risk_aware: false
+  w_o_cbf:
+    description: "无 CBF 安全过滤"
+    use_cbf: false
+  w_o_gnn:
+    description: "无 GNN 轨迹预测 (用线性外推)"
+    use_gnn: false
+  w_o_dynamic_obs:
+    description: "无动态障碍物"
+    use_dynamic_obs: false
+  w_o_amcl:
+    description: "无 AMCL (用 ground truth)"
+    use_amcl: false
+  w_o_teb:
+    description: "无 TEB (用 DWA)"
+    use_teb: false
+
+sensitivity:
+  parameters:
+    risk_lambda:
+      range: [0.3, 0.5, 1.0, 1.5, 2.0, 3.0]
+      default: 1.0
+      description: "风险厌恶系数 λ"
+    aufe_boost:
+      range: [1.0, 1.5, 2.0, 2.5, 3.0]
+      default: 2.0
+      description: "AUFE 权重增幅"
+    dyn_emergency_dist:
+      range: [1.0, 1.2, 1.5, 1.8, 2.0]
+      default: 1.5
+      description: "动态避障急停距离"
+    amcl_n_particles:
+      range: [50, 100, 200, 500, 1000]
+      default: 200
+      description: "AMCL 粒子数"
+
+failure_analysis:
+  failure_types:
+    - name: "amcl_kidnapped"
+      description: "AMCL 粒子枯竭（绑架机器人）"
+      trigger: "loc_err > 0.8m 持续 100 帧"
+    - name: "narrow_passage_stuck"
+      description: "狭窄通道卡死"
+      trigger: "位置变化 < 0.01m 持续 200 帧"
+    - name: "dynamic_collision"
+      description: "动态障碍物碰撞"
+      trigger: "与 DynamicObstacle 距离 < 0.2m"
+    - name: "dead_zone_exploration"
+      description: "死区探索不到"
+      trigger: "覆盖率 100 帧无增长"
+  collect_threshold: 5  # 每类至少收集5个案例

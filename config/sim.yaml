@@ -1,0 +1,18 @@
+# 仿真环境配置 (gaijin1.md section 7.1)
+sim:
+  # CoppeliaSim连接
+  coppelia_host: 'localhost'
+  coppelia_port: 23000
+
+  # 仿真控制
+  use_sim_time: true
+  sim_step_dt: 0.05  # 20Hz
+
+  # 场景
+  scene_file: 'home_coppelia.ttt'
+  robot_start_pos: [1.0, -2.0, 0.0]
+  robot_start_yaw: 0.0
+
+  # 渲染
+  display: ':99'
+  software_rendering: true

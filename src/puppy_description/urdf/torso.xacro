@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<robot name="torso" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="torso">
+
+    <!-- Base link (robot root) -->
+    <link name="base_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${body_length} ${body_width} ${body_height}"/>
+        </geometry>
+        <material name="blue"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${body_length} ${body_width} ${body_height}"/>
+        </geometry>
+      </collision>
+      <xacro:box_inertia m="${body_mass}" w="${body_width}" h="${body_height}" d="${body_length}"/>
+    </link>
+
+    <!-- base_footprint: projected on ground (for Nav2), must be root parent -->
+    <link name="base_footprint"/>
+    <joint name="base_footprint_to_base_link" type="fixed">
+      <parent link="base_footprint"/>
+      <child link="base_link"/>
+      <origin xyz="0 0 ${stand_height}" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Gazebo friction for base_link -->
+    <gazebo reference="base_link">
+      <material>Gazebo/Blue</material>
+    </gazebo>
+
+  </xacro:macro>
+
+</robot>

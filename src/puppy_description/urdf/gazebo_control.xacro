@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<robot name="gazebo_control" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="gazebo_control">
+
+    <!-- 平面移动插件：直接通过 /cmd_vel 控制 base_link 速度 -->
+    <!-- 最小闭环方案：先跑通 SLAM + Nav2，之后再换成足式步态 -->
+    <gazebo>
+      <plugin name="planar_move_controller" filename="libgazebo_ros_planar_move.so">
+        <command_topic>cmd_vel</command_topic>
+        <odometry_topic>odom</odometry_topic>
+        <odometry_frame>odom</odometry_frame>
+        <robot_base_frame>base_footprint</robot_base_frame>
+        <publish_odom>true</publish_odom>
+        <publish_odom_tf>true</publish_odom_tf>
+        <update_rate>50.0</update_rate>
+      </plugin>
+    </gazebo>
+
+    <!-- Gazebo friction/dynamics for base -->
+    <gazebo reference="base_link">
+      <mu1>0.3</mu1>
+      <mu2>0.3</mu2>
+      <gravity>false</gravity>
+    </gazebo>
+
+    <!-- 禁用所有腿的重力，防止机器人翻倒 -->
+    <gazebo reference="FR_hip_yaw_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="FL_hip_yaw_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RR_hip_yaw_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RL_hip_yaw_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="FR_thigh_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="FL_thigh_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RR_thigh_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RL_thigh_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="FR_calf_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="FL_calf_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RR_calf_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RL_calf_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="FR_foot_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="FL_foot_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RR_foot_link"><gravity>false</gravity></gazebo>
+    <gazebo reference="RL_foot_link"><gravity>false</gravity></gazebo>
+
+  </xacro:macro>
+
+</robot>

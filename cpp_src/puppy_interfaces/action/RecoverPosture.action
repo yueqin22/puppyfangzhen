@@ -1,0 +1,9 @@
+# Goal
+string direction
+---
+# Result
+bool success
+string message
+---
+# Feedback
+string stage

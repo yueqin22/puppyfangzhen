@@ -1,0 +1,20 @@
+motion_adapter:
+  ros__parameters:
+    use_sim: true
+    max_linear_x: 0.3
+    max_linear_y: 0.0
+    max_angular_z: 1.2
+    accel_limit: 2.0
+    yaw_rate_limit: 4.0
+    cmd_timeout: 1.0
+
+status_adapter:
+  ros__parameters:
+    use_sim: true
+    publish_raw_battery: true
+    publish_semantic_battery: true
+    battery_drain_per_tick: 0.0002
+
+mode_adapter:
+  ros__parameters:
+    use_sim: true

@@ -1,0 +1,7 @@
+gait_controller:
+  ros__parameters:
+    control_rate: 100.0    # Hz, how often to publish joint commands
+    gait_period: 0.5       # seconds, trot cycle period
+    step_length: 0.08      # meters, forward step length
+    step_height: 0.05      # meters, foot lift height during swing
+    body_height: 0.28      # meters, standing height

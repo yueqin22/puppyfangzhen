@@ -1,0 +1,26 @@
+targets:
+  dock:
+    x: 0.0
+    y: -2.0
+    yaw: 3.14159
+  living_room:
+    x: 0.0
+    y: -2.0
+    yaw: 0.0
+  doorway:
+    x: 0.0
+    y: -1.0
+    yaw: 1.5708
+  hallway:
+    x: 0.0
+    y: 1.5
+    yaw: 1.5708
+  bedroom:
+    x: -2.5
+    y: 1.5
+    yaw: 0.0
+  kitchen:
+    x: 3.0
+    y: 2.0
+    yaw: 0.0
+

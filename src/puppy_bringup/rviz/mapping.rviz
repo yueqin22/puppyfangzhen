@@ -1,0 +1,90 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Displays:
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Tree:
+        Marker Scale: 1
+        Update Interval: 0
+      Frame Timeout: 15
+      All Enabled: true
+      Line Width: 0.03
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Value: /scan
+      Size (Points): 0.03
+      Alpha: 0.8
+      Style: Points
+      Decay Time: 0
+      Selectable: true
+      Position Transformer: XYZ
+      Color Transformer: FlatColor
+      Invert Rainbow: false
+      Default Color: 255; 85; 255
+      Axis Color: 255; 255; 255
+      Color: 255; 85; 255
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Value: /map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: false
+      Occupancy/Alpha cutoff: 0.65
+      Occupancy/Unknown: 128; 128; 128
+      Occupancy/Free: 255; 255; 255
+      Occupancy/Occupied: 0; 0; 0
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      TF Prefix: ""
+      Update Interval: 0
+      Alpha: 1
+      Color: 150; 150; 150
+      Links:
+        All Links Enabled: true
+        All Links Collision Enabled: false
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+    - Class: rviz_default_plugins/Axes
+      Name: Axes
+      Enabled: true
+      Reference Frame: <Fixed Frame>
+      Length: 1
+      Radius: 0.1
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Distance: 3.0
+      Pitch: 0.5
+      Yaw: 0.5
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+  Window Geometry:
+    Width: 1000
+    Height: 800
+    X: 50
+    Y: 50

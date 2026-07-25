@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>puppypi_adapter</name>
+  <version>1.0.0</version>
+  <description>PuppyPi platform adapter: motion/status/mode translation</description>
+  <maintainer email="puppy@example.com">puppy_team</maintainer>
+  <license>MIT</license>
+  <depend>rclpy</depend>
+  <depend>ament_index_python</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>puppy_interfaces</depend>
+  <test_depend>ament_copyright</test_depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

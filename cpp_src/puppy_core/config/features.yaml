@@ -1,0 +1,23 @@
+capability_registry:
+  ros__parameters:
+    enable_navigation: true
+    enable_patrol: true
+    enable_security: true
+    enable_emotion: true
+    enable_fall_detection: true
+    enable_docking: true
+    enable_rgb_camera: true
+    enable_depth_camera: true
+    enable_lidar: true
+    enable_imu: true
+
+fall_detection:
+  ros__parameters:
+    auto_simulate_falls: false
+    sim_cycle_seconds: 60.0
+    normal_height: 1.7
+    fallen_height: 0.3
+    height_drop_threshold: 0.5
+    fall_confirm_duration: 1.0
+    alert_cooldown: 30.0
+

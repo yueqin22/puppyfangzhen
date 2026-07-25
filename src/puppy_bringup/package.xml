@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>puppy_bringup</name>
+  <version>0.0.1</version>
+  <description>Top-level launch files for Puppy SLAM simulation</description>
+  <maintainer email="veni@todo.todo">veni</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>puppy_description</depend>
+  <depend>puppy_gait</depend>
+  <depend>puppy_slam</depend>
+  <depend>puppy_nav</depend>
+  <depend>puppy_worlds</depend>
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>teleop_twist_keyboard</depend>
+  <depend>rviz2</depend>
+  <depend>rosgraph_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,46 @@
+# 树莓派 5 降配 Profile (v2.7b)
+# 适用于 PuppyPi 实体平台部署（Cortex-A76 ×4 @2.4GHz, 8GB RAM, 无 GPU）
+# 目标：在算力有限的前提下保持 10Hz 控制频率，牺牲少量精度换取实时性
+#
+# 用法：PROFILE=raspberry_pi python3 autonomous_nav.py
+#
+# 降配策略（按计算量从大到小排序）：
+#   1. AMCL 粒子数 200→100（-50% AMCL 计算量）
+#   2. TEB 迭代数 4→2（-50% TEB 计算量）
+#   3. TEB pose 数 15→10（-33% TEB 内存与计算）
+#   4. LiDAR 射线数 72→36（-50% 栅格更新计算量）
+#   5. AMCL 观测射线 24→16（-33% AMCL 观测计算）
+#
+# 预期效果（树莓派 5）：
+#   - 控制频率：~10Hz（满配 ~5Hz）
+#   - 覆盖率：~90%（满配 ~93%）
+#   - LocErr：~0.9m（满配 ~1.0m，略好因为粒子少收敛快）
+#   - 单次探索耗电：减少 30%（路径短 + 计算少）
+
+# AMCL 配置
+amcl:
+  n_particles: 100        # 200→100（粒子滤波计算量 ∝ 粒子数）
+  n_obs_rays: 16          # 24→16（观测下采样，减少似然计算）
+  sigma_obs: 0.55         # 保持不变（似然场高斯 sigma）
+  init_spread: 0.2        # 保持不变（初始粒子云半径）
+
+# TEB 局部规划器
+teb:
+  n_iterations: 2         # 4→2（梯度下降迭代数，减半计算量）
+  n_poses: 10             # 15→10（弹性带 pose 数，减 33% 内存）
+  learning_rate: 0.10     # 0.08→0.10（迭代少则步长大）
+  max_v: 0.25             # 0.3→0.25（降速保安全，实机部署保守）
+  dt: 0.1                 # 保持不变
+
+# 激光雷达
+laser:
+  num_rays: 36            # 72→36（Bresenham 射线数减半）
+  max_range: 8.0          # 保持不变
+
+# 关闭 AMCL-PROACTIVE（recover() 计算量大，树莓派上靠门道地标即可）
+proactive_recover:
+  enabled: false          # false 关闭主动漂移检测
+
+# 关闭语义视觉（节省 CPU）
+semantic:
+  enabled: false          # 实机部署可选开启

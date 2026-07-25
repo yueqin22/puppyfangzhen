@@ -1,0 +1,26 @@
+# 运行时配置 (gaijin1.md section 7.1)
+runtime:
+  # 机器人参数
+  robot_radius: 0.35          # 米
+
+  # 状态机
+  goal_tolerance: 0.5         # FOLLOW状态goal到达判定
+  no_progress_threshold: 30   # 触发RECOVER的帧数
+  recover_frames: 10          # RECOVER持续帧数
+
+  # 持久化
+  save_interval: 200          # 地图保存间隔(帧)
+  map_file: '/tmp/puppy_map.npz'
+  meta_file: '/tmp/puppy_map_meta.json'
+
+  # 可视化
+  map_html_path: '/tmp/puppy_map.html'
+  stream_frame_path: '/tmp/stream_frame.jpg'
+
+  # 日志
+  log_interval: 50            # 状态打印间隔(帧)
+  telemetry_log_interval: 50  # telemetry打印间隔(帧)
+
+  # Profile (gaijin1.md 7.1)
+  # 可选: dev / benchmark / demo / research
+  profile: 'dev'

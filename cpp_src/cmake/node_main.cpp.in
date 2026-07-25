@@ -1,0 +1,21 @@
+#include <exception>
+#include <memory>
+
+#include "@header_path@"
+#include "rclcpp/rclcpp.hpp"
+
+int main(int argc, char** argv) {
+  rclcpp::init(argc, argv);
+  try {
+    rclcpp::spin(std::make_shared<@node_class@>());
+  } catch (const std::exception&) {
+    rclcpp::shutdown();
+    return 1;
+  } catch (...) {
+    rclcpp::shutdown();
+    return 1;
+  }
+  rclcpp::shutdown();
+  return 0;
+}
+

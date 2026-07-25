@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<robot name="macros" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Inertia macro for a box -->
+  <xacro:macro name="box_inertia" params="m w h d">
+    <inertial>
+      <mass value="${m}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="${m*(h*h+d*d)/12.0}" ixy="0" ixz="0"
+               iyy="${m*(w*w+d*d)/12.0}" iyz="0"
+               izz="${m*(w*w+h*h)/12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Inertia macro for a cylinder -->
+  <xacro:macro name="cylinder_inertia" params="m r l">
+    <inertial>
+      <mass value="${m}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="${m*(3*r*r+l*l)/12.0}" ixy="0" ixz="0"
+               iyy="${m*(3*r*r+l*l)/12.0}" iyz="0"
+               izz="${m*r*r/2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Inertia macro for a sphere -->
+  <xacro:macro name="sphere_inertia" params="m r">
+    <inertial>
+      <mass value="${m}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="${2*m*r*r/5.0}" ixy="0" ixz="0"
+               iyy="${2*m*r*r/5.0}" iyz="0"
+               izz="${2*m*r*r/5.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Transmission macro -->
+  <xacro:macro name="transmission_block" params="joint_name">
+    <transmission name="${joint_name}_trans">
+      <type>transmission_interface/SimpleTransmission</type>
+      <joint name="${joint_name}">
+        <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      </joint>
+      <actuator name="${joint_name}_motor">
+        <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+        <mechanicalReduction>1</mechanicalReduction>
+      </actuator>
+    </transmission>
+  </xacro:macro>
+
+</robot>

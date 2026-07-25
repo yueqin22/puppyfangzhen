@@ -1,0 +1,15 @@
+safety_manager:
+  ros__parameters:
+    low_battery_threshold: 0.20
+    critical_battery_threshold: 0.10
+    cmd_vel_timeout: 1.0
+    motors_enabled_on_start: false
+    max_linear_x: 0.3
+    max_angular_z: 1.2
+
+safety:
+  fall_detection_enabled: true
+  fall_recovery_auto: false
+  max_recovery_attempts: 3
+  safe_stop_on_driver_error: true
+

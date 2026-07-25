@@ -1,0 +1,117 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Displays:
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      Alpha: 1
+      Enabled: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Tree:
+        Marker Scale: 0.5
+      Frame Timeout: 15
+      All Enabled: false
+      Show Axes: true
+      Show Names: false
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Value: /scan
+      Size (Points): 0.05
+      Alpha: 0.8
+      Style: Points
+      Color: 255; 85; 255
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Value: /map
+      Alpha: 0.7
+      Color Scheme: map
+    - Class: rviz_default_plugins/Map
+      Name: GlobalCostmap
+      Enabled: true
+      Topic:
+        Value: /global_costmap/costmap
+      Alpha: 0.4
+      Color Scheme: costmap
+    - Class: rviz_default_plugins/Map
+      Name: LocalCostmap
+      Enabled: true
+      Topic:
+        Value: /local_costmap/costmap
+      Alpha: 0.5
+      Color Scheme: costmap
+    - Class: rviz_default_plugins/Path
+      Name: GlobalPath
+      Enabled: true
+      Topic:
+        Value: /plan
+      Color: 25; 255; 0
+      Line Style: Lines
+      Line Width: 0.03
+    - Class: rviz_default_plugins/Path
+      Name: LocalPath
+      Enabled: true
+      Topic:
+        Value: /local_plan
+      Color: 255; 255; 0
+      Line Style: Lines
+      Line Width: 0.02
+    - Class: rviz_default_plugins/PoseWithCovariance
+      Name: AMCL
+      Enabled: true
+      Topic:
+        Value: /amcl_pose
+      Color: 255; 25; 0
+      Shape: Arrow
+    - Class: rviz_default_plugins/PoseArray
+      Name: Particles
+      Enabled: true
+      Topic:
+        Value: /particlecloud
+      Color: 255; 255; 0
+      Shape: Arrow
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: nav2_rviz_plugins/GoalTool
+      Topic:
+        Value: /goal_pose
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Distance: 8.0
+      Pitch: 0.7
+      Yaw: 0.5
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.3
+  Window Geometry:
+    Width: 1280
+    Height: 960
+    X: 0
+    Y: 0
+    Hide: false
+    Fullscreen: true

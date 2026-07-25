@@ -1,0 +1,40 @@
+﻿# Build artifacts (C++)
+*.obj
+*.exe
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs and experiment outputs
+*.log
+*.csv
+
+# IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# CoppeliaSim backups
+*.ttt.bak
+
+# Backup directories
+backup_*/
+
+# Temporary files
+*.tmp
+*.swp
+
+# Large binary files
+*.bag
+*.db3
+*.mcap

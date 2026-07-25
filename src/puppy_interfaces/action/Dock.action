@@ -1,0 +1,13 @@
+# Goal
+string dock_id
+bool force
+---
+# Result
+bool success
+bool charging
+string message
+---
+# Feedback
+string stage
+float32 distance_estimate
+bool dock_visible
