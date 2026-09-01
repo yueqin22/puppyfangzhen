@@ -1,4 +1,4 @@
-﻿# Build artifacts (C++)
+# Build artifacts (C++)
 *.obj
 *.exe
 *.lib
@@ -13,6 +13,23 @@ __pycache__/
 # Logs and experiment outputs
 *.log
 *.csv
+
+# Experiment results (依据 guihua20260809.md 第6节)
+experiment_results/official/
+experiment_results/demo/
+ablation_results_v3/
+ablation_results/
+*_run.log
+*_config.json
+algo_comparison.json
+algo_comparison.json.legacy_bak
+
+# 归档目录 (P2-4 清理)
+scripts/archive/
+archive/
+
+# C++ 测试构建
+cpp_src/build_tests/
 
 # IDE files
 .vs/
@@ -38,3 +55,32 @@ backup_*/
 *.bag
 *.db3
 *.mcap
+
+# Colcon build / runtime artifacts (Puppy ROS2 工作区)
+build/
+install/
+log/
+logs/
+
+# Screenshots & QA captures (运行截图，不入仓)
+screenshots/
+_qa_shots/
+_qa_shots_v2/
+_qa_shots_v3/
+*.png
+*.pdf
+
+# 仿真/评估/消融 结果目录（依据各 guihua*.md，结果不入库）
+experiment_results/
+eval_results/
+ablation_results_v2/
+theory_figures/
+sensitivity_results/
+artifacts/
+
+# 第三方库与嵌套 git 仓（各自独立管理）
+third_party/
+robot_src/
+
+# WorkBuddy 项目记忆（含本地备忘，绝不入库）
+.workbuddy/
