@@ -87,6 +87,7 @@ robot_src/
 
 # C++ 离线仿真构建/运行产物 (cpp_src)
 cpp_src/**/build/
+cpp_src/build_all/
 cpp_src/**/build_protocol/
 *.log.err
 *.log.out
@@ -94,7 +95,7 @@ cpp_src/**/build_protocol/
 *.out
 build_out.txt
 build_err.txt
-*.pid.txt
+*_pid.txt
 *.ninja
 .ninja_log
 .ninja_deps
