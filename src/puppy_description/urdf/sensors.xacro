@@ -142,9 +142,9 @@
         <plugin name="depth_camera_plugin" filename="libgazebo_ros_camera.so">
           <ros>
             <namespace>/camera</namespace>
-            <remapping>image_raw:=rgb/image_raw</remapping>
+            <remapping>image_raw:=color/image_raw</remapping>
             <remapping>depth/image_raw:=depth/image_raw</remapping>
-            <remapping>camera_info:=rgb/camera_info</remapping>
+            <remapping>camera_info:=color/camera_info</remapping>
             <remapping>depth/camera_info:=depth/camera_info</remapping>
           </ros>
           <frame_name>camera_depth_frame</frame_name>

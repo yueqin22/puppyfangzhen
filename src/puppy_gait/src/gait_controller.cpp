@@ -9,7 +9,7 @@ namespace puppy_gait {
 GaitController::GaitController()
     : Node("gait_controller"),
       gait_(DEFAULT_GAIT),
-      ik_({0.20, 0.20}),
+      ik_({0.105, 0.115}),
       t_(0.0),
       vx_(0.0), vy_(0.0), wz_(0.0),
       standing_(true),
@@ -20,7 +20,9 @@ GaitController::GaitController()
     this->declare_parameter("gait_period", 0.5);
     this->declare_parameter("step_length", 0.08);
     this->declare_parameter("step_height", 0.05);
-    this->declare_parameter("body_height", 0.28);
+    this->declare_parameter("body_height", 0.205);
+    this->declare_parameter("thigh_length", 0.105);
+    this->declare_parameter("calf_length", 0.115);
 
     control_rate_ = this->get_parameter("control_rate").as_double();
 
@@ -31,6 +33,9 @@ GaitController::GaitController()
     params.step_height = this->get_parameter("step_height").as_double();
     params.body_height = this->get_parameter("body_height").as_double();
     gait_.setParams(params);
+    ik_ = InverseKinematics({
+        this->get_parameter("thigh_length").as_double(),
+        this->get_parameter("calf_length").as_double()});
 
     // Joint names in the order expected by joint_trajectory_controller
     joint_names_ = {

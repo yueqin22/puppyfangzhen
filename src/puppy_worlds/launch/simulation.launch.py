@@ -24,6 +24,10 @@ def generate_launch_description():
         'use_sim_time', default_value='true',
         description='Use simulation (Gazebo) clock if true')
 
+    planar_arg = DeclareLaunchArgument(
+        'use_planar_move', default_value='true',
+        description='Use planar navigation model instead of joint dynamics')
+
     # Launch Gazebo
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -38,7 +42,9 @@ def generate_launch_description():
 
     # Robot URDF
     urdf_file = os.path.join(pkg_description, 'urdf', 'puppy.urdf.xacro')
-    robot_description = Command(['xacro ', urdf_file])
+    robot_description = Command([
+        'xacro ', urdf_file,
+        ' use_planar_move:=', LaunchConfiguration('use_planar_move')])
 
     # Spawn robot
     spawn_entity = Node(
@@ -67,6 +73,7 @@ def generate_launch_description():
         world_arg,
         gui_arg,
         sim_time_arg,
+        planar_arg,
         gazebo,
         robot_state_publisher,
         spawn_entity,

@@ -35,47 +35,101 @@ class StatusAdapterNode(Node):
 
         self.battery_percent = 0.80
         self.sdk_connected = False
-        self.joint_names = [f'leg{i}_{j}' for i in range(4) for j in ['hip', 'knee']]
+        self.joint_names = [
+            'FR_hip_yaw_joint', 'FR_hip_pitch_joint', 'FR_knee_joint',
+            'FL_hip_yaw_joint', 'FL_hip_pitch_joint', 'FL_knee_joint',
+            'RR_hip_yaw_joint', 'RR_hip_pitch_joint', 'RR_knee_joint',
+            'RL_hip_yaw_joint', 'RL_hip_pitch_joint', 'RL_knee_joint',
+        ]
 
         self.health_pub = self.create_publisher(RobotHealth, '/platform/health', 10)
         self.joint_pub = self.create_publisher(JointState, '/joint_states', 10)
         self.battery_pub = self.create_publisher(BatteryState, '/battery_state', 10)
         self.battery_semantic_pub = self.create_publisher(BatteryStatus, '/battery_status', 10)
 
+        self.hw = None
+        backend = 'sim' if self.use_sim else 'real'
+        try:
+            from .hardware_interface import HardwareInterface
+            self.hw = HardwareInterface.create({'backend': backend})
+            self.sdk_connected = self.hw.initialize()
+            if not self.sdk_connected:
+                self.get_logger().warn(f'HardwareInterface ({backend}) initialization returned False, falling back to mock')
+                self.hw = HardwareInterface.create({'backend': 'mock'})
+                self.hw.initialize()
+        except Exception as exc:
+            self.get_logger().warn(
+                f'Failed to initialize HardwareInterface ({backend}): {exc}. Falling back to mock interface.'
+            )
+            try:
+                from .hardware_interface import HardwareInterface
+                self.hw = HardwareInterface.create({'backend': 'mock'})
+                self.hw.initialize()
+            except Exception as mock_exc:
+                self.get_logger().error(f'Mock HardwareInterface initialization failed: {mock_exc}')
+                self.hw = None
+
         self.create_timer(0.05, self._poll_status)
 
-        self.puppypi = None
-        if not self.use_sim:
-            try:
-                raise ImportError('PuppyPi SDK not yet integrated')
-            except ImportError as exc:
-                self.get_logger().fatal(
-                    f'use_sim=False but PuppyPi SDK unavailable: {exc}. '
-                    f'Set use_sim:=true for simulation.'
-                )
-                raise
-
-        mode_tag = '[SIM]' if self.use_sim else '[HARDWARE]'
+        mode_tag = '[SIM]' if self.use_sim else ('[HARDWARE]' if self.sdk_connected else '[FALLBACK-MOCK]')
         self.get_logger().info(f'Status adapter started {mode_tag}')
 
     def _poll_status(self):
         """Poll PuppyPi for status and publish to ROS2."""
-        self.battery_percent = max(0.0, self.battery_percent - self.battery_drain_per_tick)
+        if self.hw:
+            readings = self.hw.get_sensor_readings()
+            battery_state = self.hw.get_battery()
+            health_state = self.hw.get_health()
+
+            self.battery_percent = battery_state.percent
+            battery_voltage = battery_state.voltage
+            battery_current = battery_state.current
+            is_charging = battery_state.charging
+            cpu_temp = health_state.cpu_temp
+            health_ok = health_state.ok
+            health_level = health_state.level
+            active_faults = health_state.active_faults
+            imu_ready = health_state.imu_ready
+            lidar_ready = health_state.lidar_ready
+            camera_ready = health_state.camera_ready
+            motion_ready = health_state.motion_ready
+        else:
+            self.battery_percent = max(0.0, self.battery_percent - self.battery_drain_per_tick)
+            battery_voltage = 12.0 * (0.8 + 0.2 * self.battery_percent)
+            battery_current = -0.8
+            is_charging = False
+            cpu_temp = 0.0
+            health_ok = self.battery_percent > 0.10
+            health_level = 'WARN' if not self.sdk_connected else ('OK' if health_ok else 'ERROR')
+            active_faults = []
+            if not self.sdk_connected:
+                active_faults.append('STATUS_SOURCE_SIMULATED')
+            if self.battery_percent <= 0.10:
+                active_faults.append('BATTERY_CRITICAL')
+            elif self.battery_percent <= 0.20:
+                active_faults.append('BATTERY_LOW')
+            imu_ready = self.sdk_connected
+            lidar_ready = self.sdk_connected
+            camera_ready = self.sdk_connected
+            motion_ready = True
 
         js = JointState()
         js.header.stamp = self.get_clock().now().to_msg()
         js.name = self.joint_names
-        js.position = [0.0] * 8
-        js.velocity = [0.0] * 8
-        js.effort = [0.0] * 8
+        js.position = [0.0] * 12
+        js.velocity = [0.0] * 12
+        js.effort = [0.0] * 12
         self.joint_pub.publish(js)
 
         bs = BatteryState()
         bs.header.stamp = self.get_clock().now().to_msg()
-        bs.voltage = 12.0 * (0.8 + 0.2 * self.battery_percent)
-        bs.current = -0.8
+        bs.voltage = battery_voltage
+        bs.current = battery_current
         bs.percentage = self.battery_percent
-        bs.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+        bs.power_supply_status = (
+            BatteryState.POWER_SUPPLY_STATUS_CHARGING if is_charging
+            else BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+        )
         if self.publish_raw_battery:
             self.battery_pub.publish(bs)
 
@@ -85,28 +139,22 @@ class StatusAdapterNode(Node):
             sem.voltage = bs.voltage
             sem.current = bs.current
             sem.percent = self.battery_percent
-            sem.charging = False
+            sem.charging = is_charging
             sem.low_battery = self.battery_percent <= 0.20
             sem.critical_battery = self.battery_percent <= 0.10
             self.battery_semantic_pub.publish(sem)
 
         health = RobotHealth()
         health.header.stamp = bs.header.stamp
-        health.ok = self.battery_percent > 0.10
-        health.level = 'WARN' if not self.sdk_connected else ('OK' if health.ok else 'ERROR')
-        health.active_faults = []
-        if not self.sdk_connected:
-            health.active_faults.append('STATUS_SOURCE_SIMULATED')
-        if self.battery_percent <= 0.10:
-            health.active_faults.append('BATTERY_CRITICAL')
-        elif self.battery_percent <= 0.20:
-            health.active_faults.append('BATTERY_LOW')
-        health.cpu_temp = 0.0
+        health.ok = health_ok
+        health.level = health_level
+        health.active_faults = active_faults
+        health.cpu_temp = cpu_temp
         health.battery_percent = self.battery_percent * 100.0
-        health.imu_ready = self.sdk_connected
-        health.lidar_ready = self.sdk_connected
-        health.camera_ready = self.sdk_connected
-        health.motion_ready = True
+        health.imu_ready = imu_ready
+        health.lidar_ready = lidar_ready
+        health.camera_ready = camera_ready
+        health.motion_ready = motion_ready
         self.health_pub.publish(health)
 
 

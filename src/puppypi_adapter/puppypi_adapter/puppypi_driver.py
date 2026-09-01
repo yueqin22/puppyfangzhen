@@ -303,8 +303,12 @@ class PuppyPiHardwareInterface(HardwareInterface):
         if self._sdk:
             try:
                 # PuppyPi SDK 调用 (实际 API 根据版本调整)
-                # self._sdk.set_velocity(vx, vy, wz)
-                pass
+                method = getattr(self._sdk, 'set_velocity', None)
+                if method is None:
+                    method = getattr(self._sdk, 'move', None)
+                if method is None:
+                    raise AttributeError('PuppyPi SDK has no set_velocity or move')
+                method(vx, vy, wz)
             except Exception as e:
                 logger.error(f"电机控制失败: {e}")
                 self._error_count += 1

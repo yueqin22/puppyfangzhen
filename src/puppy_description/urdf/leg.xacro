@@ -31,10 +31,12 @@
     </link>
 
     <!-- Hip yaw joint (fixed) -->
-    <joint name="${prefix}_hip_yaw_joint" type="fixed">
+    <joint name="${prefix}_hip_yaw_joint" type="revolute">
       <parent link="base_link"/>
       <child link="${prefix}_hip_yaw_link"/>
       <origin xyz="${x_pos} ${y_offset} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-0.55" upper="0.55" effort="3.0" velocity="4.0"/>
     </joint>
 
     <!-- Hip pitch link (thigh) -->
@@ -56,10 +58,12 @@
     </link>
 
     <!-- Hip pitch joint (fixed) -->
-    <joint name="${prefix}_hip_pitch_joint" type="fixed">
+    <joint name="${prefix}_hip_pitch_joint" type="revolute">
       <parent link="${prefix}_hip_yaw_link"/>
       <child link="${prefix}_thigh_link"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-1.35" upper="1.35" effort="3.0" velocity="5.0"/>
     </joint>
 
     <!-- Calf link (shin) -->
@@ -81,10 +85,12 @@
     </link>
 
     <!-- Knee joint (fixed) -->
-    <joint name="${prefix}_knee_joint" type="fixed">
+    <joint name="${prefix}_knee_joint" type="revolute">
       <parent link="${prefix}_thigh_link"/>
       <child link="${prefix}_calf_link"/>
       <origin xyz="0 0 ${-L1}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-2.35" upper="0.15" effort="3.0" velocity="5.0"/>
     </joint>
 
     <!-- Foot tip (sphere for contact) -->

@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>nav_core</name>
+  <version>1.0.0</version>
+  <description>Platform-agnostic navigation kernel</description>
+  <maintainer email="puppy@example.com">puppy_team</maintainer>
+  <license>MIT</license>
+  <exec_depend>python3-numpy</exec_depend>
+</package>

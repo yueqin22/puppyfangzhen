@@ -82,7 +82,10 @@ class MotionAdapterNode(Node):
                 # 尝试导入 PuppyPi SDK
                 # from puppypi_control import PuppyPiClient
                 # self.puppypi = PuppyPiClient(...)
-                raise ImportError('PuppyPi SDK not yet integrated')
+                from .puppypi_driver import PuppyPiHardwareInterface
+                self.puppypi = PuppyPiHardwareInterface({'backend': 'real'})
+                if not self.puppypi.initialize():
+                    raise RuntimeError('PuppyPi hardware initialization failed')
             except ImportError as exc:
                 self.get_logger().fatal(
                     f'use_sim=False but PuppyPi SDK unavailable: {exc}. '
@@ -124,8 +127,8 @@ class MotionAdapterNode(Node):
             pass
         else:
             # 真机模式：发送到 PuppyPi SDK
-            # self.puppypi.set_velocity(self.current_vx, 0, self.current_wz)
-            pass  # TODO: SDK 集成后取消注释
+            if self.puppypi:
+                self.puppypi.send_velocity(self.current_vx, 0.0, self.current_wz)
 
         self.moving = abs(self.current_vx) > 0.01 or abs(self.current_wz) > 0.05
         if self.moving:

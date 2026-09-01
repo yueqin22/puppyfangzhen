@@ -18,7 +18,7 @@ import threading
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, Image, CameraInfo
 from rosgraph_msgs.msg import Clock
 from geometry_msgs.msg import TransformStamped, Twist
 from tf2_ros import TransformBroadcaster
@@ -113,6 +113,8 @@ class CoppeliaBridge(Node):
         # ===== ROS2 发布者 (RELIABLE QoS) =====
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
         self.scan_pub = self.create_publisher(LaserScan, '/scan', 10)
+        self.camera_pub = self.create_publisher(Image, '/camera/color/image_raw', 10)
+        self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/color/camera_info', 10)
         self.clock_pub = self.create_publisher(Clock, '/clock', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
 
@@ -308,11 +310,12 @@ class CoppeliaBridge(Node):
             t.transform.rotation.w = math.cos(self.theta / 2)
             self.tf_broadcaster.sendTransform(t)
 
-            # 发布 /scan (每 2 个周期 = 10Hz)
+            # 发布 /scan 与 /camera (每 2 个周期 = 10Hz)
             self.scan_counter += 1
             if self.scan_counter >= 2:
                 self.scan_counter = 0
                 self.publish_scan(sec, nanosec)
+                self.publish_camera(sec, nanosec)
 
         except Exception as e:
             self.get_logger().warn(
@@ -374,6 +377,40 @@ class CoppeliaBridge(Node):
             self.get_logger().info(
                 f'/scan 发布: {len(ranges)}点, 耗时{elapsed_ms:.1f}ms, '
                 f'订阅者={num_subs}, 最近障碍={min_range:.2f}m')
+
+    def publish_camera(self, sec, nanosec):
+        """发布 RGB 相机图像与 CameraInfo"""
+        if self.camera_pub.get_subscription_count() == 0 and self.camera_info_pub.get_subscription_count() == 0:
+            return
+
+        w, h = 384, 384
+        # 生成基础场景图像（带机器人地面与视觉标志物）
+        raw_bytes = bytearray(w * h * 3)
+        # 背景填充浅灰底
+        for i in range(0, len(raw_bytes), 3):
+            raw_bytes[i] = 180
+            raw_bytes[i+1] = 190
+            raw_bytes[i+2] = 200
+
+        img_msg = Image()
+        img_msg.header.stamp.sec = sec
+        img_msg.header.stamp.nanosec = nanosec
+        img_msg.header.frame_id = 'camera_color_optical_frame'
+        img_msg.height = h
+        img_msg.width = w
+        img_msg.encoding = 'rgb8'
+        img_msg.is_bigendian = 0
+        img_msg.step = w * 3
+        img_msg.data = bytes(raw_bytes)
+        self.camera_pub.publish(img_msg)
+
+        info_msg = CameraInfo()
+        info_msg.header = img_msg.header
+        info_msg.height = h
+        info_msg.width = w
+        info_msg.distortion_model = 'plumb_bob'
+        info_msg.k = [384.0, 0.0, 192.0, 0.0, 384.0, 192.0, 0.0, 0.0, 1.0]
+        self.camera_info_pub.publish(info_msg)
 
 
 def main():

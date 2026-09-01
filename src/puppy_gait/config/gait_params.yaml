@@ -4,4 +4,6 @@ gait_controller:
     gait_period: 0.5       # seconds, trot cycle period
     step_length: 0.08      # meters, forward step length
     step_height: 0.05      # meters, foot lift height during swing
-    body_height: 0.28      # meters, standing height
+    body_height: 0.205     # meters, PuppyPi nominal standing height
+    thigh_length: 0.105
+    calf_length: 0.115
