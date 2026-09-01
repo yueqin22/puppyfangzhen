@@ -139,6 +139,23 @@ void Costmap::update_static(const OccupancyGrid& grid, int frame) {
         uint8_t s = static_layer[i];
         static_cost[i] = (inf_val > s) ? inf_val : s;
     }
+
+    // ===== R19i BUG#4 正确修正: 仅在 Costmap 边缘标记 LETHAL(避免A*计划到地图外), =====
+    //   同时 UE ClampToHomeBounds 设置为 costmap 边界 - 2cm = 永不超出地图.
+    //   R19g的5 cells (=0.5m) 太大了 = 把室内0.5m通道变成墙(导致R19i机器人沿外圈走不进门道!).
+    //   1 cell (=0.1m)才是正确的: 仅最外1格=地图真正边缘 (x∈[-5,-4.9]和[4.9,5.0], y同理).
+    //   效果: A*不规划到地图真实边缘外, UE侧clamp (-4.98,4.98)(-3.98,3.98)对齐.
+    {
+        constexpr int MARGIN = 1;  // 0.1m = 最外1格 (NOT 5格!)
+        for (int gy = 0; gy < GRID_H; ++gy) {
+            for (int gx = 0; gx < GRID_W; ++gx) {
+                if (gx < MARGIN || gx >= (GRID_W - MARGIN) ||
+                    gy < MARGIN || gy >= (GRID_H - MARGIN)) {
+                    static_cost[static_cast<size_t>(gy) * GRID_W + gx] = COST_LETHAL;
+                }
+            }
+        }
+    }
     merge();
     last_occupied_count_ = occupied_count;
     last_static_update_frame_ = frame;

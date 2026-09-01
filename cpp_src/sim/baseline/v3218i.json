@@ -1,0 +1,42 @@
+{
+  "version": "v3.2.19",
+  "date": "2026-08-03",
+  "description": "P1-2.2完成后基线: A*四级规划保障(标准+放宽+静态层+直线保底), A*成功率≥99.5%",
+  "test_config": {
+    "frames": 108000,
+    "report_interval": 54000,
+    "env": {
+      "USE_AMCL": "1",
+      "USE_IMU_FUSION": "1",
+      "USE_ICP": "0"
+    }
+  },
+  "seeds": [
+    {"seed": 1,  "collision": 0, "astar_rate": 100.0, "avg_err": 0.315, "max_err": 1.798, "conf": 0.851, "rooms": 8, "rounds": 5},
+    {"seed": 2,  "collision": 0, "astar_rate": 100.0, "avg_err": 0.064, "max_err": 1.807, "conf": 0.802, "rooms": 8, "rounds": 4},
+    {"seed": 3,  "collision": 0, "astar_rate": 99.8,  "avg_err": 0.146, "max_err": 2.979, "conf": 0.863, "rooms": 9, "rounds": 22},
+    {"seed": 4,  "collision": 0, "astar_rate": 99.5,  "avg_err": 0.080, "max_err": 2.520, "conf": 0.817, "rooms": 8, "rounds": 5},
+    {"seed": 5,  "collision": 0, "astar_rate": 99.5,  "avg_err": 0.080, "max_err": 2.124, "conf": 0.867, "rooms": 8, "rounds": 13},
+    {"seed": 6,  "collision": 0, "astar_rate": 100.0, "avg_err": 0.144, "max_err": 2.503, "conf": 0.979, "rooms": 7, "rounds": 6},
+    {"seed": 7,  "collision": 0, "astar_rate": 99.9,  "avg_err": 0.092, "max_err": 3.241, "conf": 0.783, "rooms": 8, "rounds": 5},
+    {"seed": 8,  "collision": 0, "astar_rate": 100.0, "avg_err": 0.170, "max_err": 8.467, "conf": 0.837, "rooms": 8, "rounds": 7},
+    {"seed": 9,  "collision": 0, "astar_rate": 99.9,  "avg_err": 0.071, "max_err": 2.148, "conf": 0.979, "rooms": 8, "rounds": 13},
+    {"seed": 10, "collision": 0, "astar_rate": 100.0, "avg_err": 0.161, "max_err": 3.894, "conf": 0.825, "rooms": 8, "rounds": 5}
+  ],
+  "summary": {
+    "total_collisions": 0,
+    "avg_astar_rate": 99.96,
+    "avg_avg_err": 0.131,
+    "avg_conf": 0.862,
+    "min_astar_rate": 99.5,
+    "max_avg_err": 0.315,
+    "pass_criteria": {
+      "collision": 0,
+      "astar_rate_min": 90.0,
+      "avg_err_max": 0.5,
+      "conf_min": 0.1,
+      "rooms_min": 3,
+      "stuck_max_pct": 20.0
+    }
+  }
+}

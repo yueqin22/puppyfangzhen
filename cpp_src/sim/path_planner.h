@@ -175,7 +175,7 @@ inline std::vector<std::pair<double,double>> rdp_simplify(
     std::function<std::vector<std::pair<double,double>>(std::vector<std::pair<double,double>>, double)> rdp =
         [&](std::vector<std::pair<double,double>> pts, double e) -> std::vector<std::pair<double,double>> {
         if (pts.size() < 3) return pts;
-        double max_d = 0; int max_i = 0;
+        double max_d = 0; size_t max_i = 0;
         for (size_t i = 1; i < pts.size()-1; i++) {
             double d = perp_dist(pts[i], pts[0], pts.back());
             if (d > max_d) { max_d = d; max_i = i; }

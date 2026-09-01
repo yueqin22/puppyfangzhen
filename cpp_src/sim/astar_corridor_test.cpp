@@ -120,8 +120,8 @@ int main() {
     printf("测试 4: 过窄门道（0.6m，机器人无法通过）\n");
     printf("  注意: INSCRIBED_RADIUS=0 时 A* 仅靠 LETHAL 阻塞，可能规划成功\n");
     printf("  但机器人执行时会因物理碰撞无法通过\n");
-    test_doorway(0.6, true);  // 不计 pass/fail，仅观察
-    total_tests = 3;  // 只计前3个测试
+    if (test_doorway(0.6, false)) pass_count++;
+    total_tests = 4;
 
     printf("\n======================================================================\n");
     printf("  结果: %d/%d 测试通过\n", pass_count, total_tests);

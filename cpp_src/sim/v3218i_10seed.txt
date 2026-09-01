@@ -1,0 +1,11 @@
+﻿=== v3.2.18i 10seed ===
+seed=1 | coll=0 | A*=99.9% | avg_err=0.146m | max_err=1.798m | conf=0.976 | rooms=8 | rounds=10 | time=328.7s
+seed=2 | coll=0 | A*=100.0% | avg_err=0.064m | max_err=1.807m | conf=0.802 | rooms=8 | rounds=4 | time=332s
+seed=3 | coll=0 | A*=99.8% | avg_err=0.146m | max_err=2.979m | conf=0.863 | rooms=9 | rounds=22 | time=309.3s
+seed=4 | coll=0 | A*=99.5% | avg_err=0.080m | max_err=2.520m | conf=0.817 | rooms=8 | rounds=5 | time=332.8s
+seed=5 | coll=0 | A*=99.5% | avg_err=0.080m | max_err=2.124m | conf=0.867 | rooms=8 | rounds=13 | time=314.6s
+seed=6 | coll=0 | A*=97.2% | avg_err=0.089m | max_err=2.503m | conf=0.975 | rooms=8 | rounds=10 | time=319.6s
+seed=7 | coll=0 | A*=99.9% | avg_err=0.092m | max_err=3.241m | conf=0.783 | rooms=8 | rounds=5 | time=351.5s
+seed=8 | coll=0 | A*=99.4% | avg_err=0.113m | max_err=8.467m | conf=0.815 | rooms=8 | rounds=9 | time=333.9s
+seed=9 | coll=0 | A*=99.9% | avg_err=0.071m | max_err=2.148m | conf=0.979 | rooms=8 | rounds=13 | time=325.1s
+seed=10 | coll=0 | A*=100.0% | avg_err=0.161m | max_err=3.894m | conf=0.825 | rooms=8 | rounds=5 | time=337.5s

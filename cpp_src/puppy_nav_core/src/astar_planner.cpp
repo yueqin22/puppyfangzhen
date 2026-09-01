@@ -51,7 +51,8 @@ double AStarPlanner::cell_cost(int gx, int gy) const {
     // 被强烈抑制。这使 A* 偏好绕开狭窄通道的较长路径，
     // 而非 DWA 无法跟随的捷径。
     //
-    // v2.3 调优：增大惩罚系数 (8.0->12.0) 使路径更远离墙壁，
+    // v2.3 调优：增大惩罚系数 (8.0->12.0->30.0) 使路径更远离墙壁/家具，
+    //   避免跟随器在定位误差下刮碰 coffee_table 等障碍的拐角(§16 验收残留缺陷)
     // 减少机器人卡在膨胀区导致的 RECOVER 触发。
     //
     // v3.1 优化：UNKNOWN cell 软惩罚（不再硬阻塞）
@@ -61,7 +62,7 @@ double AStarPlanner::cell_cost(int gx, int gy) const {
     //   A* 会优先选已观测自由 cell，仅在无路时才穿越 UNKNOWN 区域。
     //   has_line_of_sight() 仍拒绝 UNKNOWN（避免平滑阶段抄近路）。
     uint8_t c = costmap_.get_cost_grid(gx, gy);
-    if (c >= PLAN_BLOCKED) {
+    if (c >= current_threshold_) {
         return std::numeric_limits<double>::infinity();  // 阻塞
     }
     // UNKNOWN cell 软惩罚：基础代价 5.0（仍可通行但优先级低）
@@ -71,53 +72,143 @@ double AStarPlanner::cell_cost(int gx, int gy) const {
     // 二次惩罚：free=1, cost 50->2.7, cost 100->11.0, cost 109->13.0
     double cf = static_cast<double>(c);
     double pb = static_cast<double>(PLAN_BLOCKED);
-    return 1.0 + (cf / pb) * (cf / pb) * 12.0;
+    return 1.0 + (cf / pb) * (cf / pb) * 30.0;
 }
 
 bool AStarPlanner::is_traversable(int gx, int gy) const {
     // cell 是否可进入（代价低于阈值）。
-    //
-    // v3.1 优化：UNKNOWN cell 不再硬阻塞（cell_cost 中加软惩罚 5.0）
-    //   原行为: UNKNOWN cell 直接返回 false，A* 成功率 46.1%
-    //   新行为: UNKNOWN cell 视为可通行，cell_cost 返回 5.0 高代价
-    //   1 小时测试中 UNKNOWN cell 主要在门道边缘（init_from_obstacles
-    //   0.5m 扫描间距导致的盲区），软惩罚让 A* 优先选已知自由 cell
-    //   但仍允许穿越门道盲区，大幅提升成功率。
-    //
-    // 阻塞条件（保留）:
-    //   - cost >= PLAN_BLOCKED（实际障碍/膨胀致命区）
-    uint8_t c = costmap_.get_cost_grid(gx, gy);
-    if (c >= PLAN_BLOCKED) {
+    // v3.2.10: 使用 current_threshold_ 支持放宽模式
+    // P1-2.2: static_only_mode_ 为 true 时忽略动态障碍层，只看静态层 static_cost
+    return is_footprint_traversable(gx, gy, current_threshold_);
+}
+
+bool AStarPlanner::is_footprint_traversable(int gx, int gy, int threshold) const {
+    if (gx < 0 || gx >= GRID_W || gy < 0 || gy >= GRID_H) {
         return false;
+    }
+
+    // R26a: 起点邻域宽容 —— 在距规划起点 START_RELIEF_RADIUS 内改用 PHYSICAL_RADIUS。
+    //   机器人物理半径 0.20m，但默认 footprint 判定用 0.35m，中间 15cm 是
+    //   "物理合法却被 A* 判致命"的带。贴墙位姿落入该带会使起点嵌墙，
+    //   旧逻辑强拽起点 0.7m 导致路径与真身脱节 → 零速死锁。
+    //   这里只放宽起点附近，让机器人能走出该带；离开邻域立刻恢复严格判定。
+    double eff_radius = ROBOT_RADIUS;
+    if (relief_active_) {
+        double wx, wy;
+        costmap_.grid_to_world(gx, gy, wx, wy);
+        double ddx = wx - relief_cx_;
+        double ddy = wy - relief_cy_;
+        if (ddx * ddx + ddy * ddy <= START_RELIEF_RADIUS * START_RELIEF_RADIUS) {
+            eff_radius = PHYSICAL_RADIUS;
+        }
+    }
+
+    const int radius_cells = static_cast<int>(std::ceil(eff_radius / GRID_RESOLUTION));
+    for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+        for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
+            if (std::sqrt(static_cast<double>(dx * dx + dy * dy)) * GRID_RESOLUTION > eff_radius) {
+                continue;
+            }
+            int nx = gx + dx;
+            int ny = gy + dy;
+            if (nx < 0 || nx >= GRID_W || ny < 0 || ny >= GRID_H) {
+                return false;
+            }
+            if (nx == gx && ny == gy) {
+                uint8_t center_cost = static_only_mode_
+                    ? costmap_.static_cost[static_cast<size_t>(ny) * GRID_W + nx]
+                    : costmap_.get_cost_grid(nx, ny);
+                if (center_cost >= threshold) {
+                    return false;
+                }
+            }
+            if (costmap_.static_cost[static_cast<size_t>(ny) * GRID_W + nx] >= COST_LETHAL) {
+                return false;
+            }
+        }
     }
     return true;
 }
 
-std::pair<int, int> AStarPlanner::find_nearest_free(int gx, int gy, int max_radius) const {
-    // 使用 BFS 寻找离 (gx, gy) 最近的可通行 cell。
-    if (is_traversable(gx, gy)) {
+std::pair<int, int> AStarPlanner::find_nearest_free(int gx, int gy, int max_radius,
+                                                     int threshold_overload) const {
+    // 使用方形环壳 BFS 寻找离 (gx, gy) 最近的可通行 cell。
+    // P1-2.2:
+    //   1) 修复 r < max_radius -> r <= max_radius（原逻辑漏搜了最外一圈）
+    //   2) 支持 threshold_overload，允许自定义阻塞阈值（放宽阈值重试时用）
+    //   3) static_only_mode_ 时忽略 dynamic obstacle，只看 static_cost（纯静态层 fallback）
+    //   4) 先检查中心 cell，再按 r=1..max_radius 逐圈扩展
+    auto traversable = [&](int x, int y) -> bool {
+        if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
+        uint8_t c;
+        if (static_only_mode_) {
+            c = costmap_.static_cost[static_cast<size_t>(y) * GRID_W + x];
+        } else {
+            c = costmap_.get_cost_grid(x, y);
+        }
+        int thresh = (threshold_overload >= 0) ? threshold_overload : current_threshold_;
+        return is_footprint_traversable(x, y, thresh);
+    };
+
+    if (traversable(gx, gy)) {
         return {gx, gy};
     }
-    for (int r = 1; r < max_radius; ++r) {
+    // P1-2.2: 原 r < max_radius 漏搜最外一圈，现改为 <=
+    for (int r = 1; r <= max_radius; ++r) {
         for (int dx = -r; dx <= r; ++dx) {
             for (int dy = -r; dy <= r; ++dy) {
                 if (std::abs(dx) != r && std::abs(dy) != r) {
-                    continue;  // 只检查当前半径 r 的环形边缘
+                    continue;  // 只检查当前半径 r 的方形环壳边缘
                 }
                 int nx = gx + dx;
                 int ny = gy + dy;
-                if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H) {
-                    if (is_traversable(nx, ny)) {
-                        return {nx, ny};
-                    }
+                if (traversable(nx, ny)) {
+                    return {nx, ny};
                 }
             }
         }
     }
-    return {-1, -1};  // 未找到（对应 Python 的 None, None）
+    return {-1, -1};  // 范围内未找到
 }
 
 std::vector<std::pair<double, double>> AStarPlanner::plan(
+    double start_x, double start_y,
+    double goal_x, double goal_y) {
+    // v3.2.10: 标准 plan — 用 PLAN_BLOCKED 阈值
+    current_threshold_ = PLAN_BLOCKED;
+    return plan_impl(start_x, start_y, goal_x, goal_y);
+}
+
+std::vector<std::pair<double, double>> AStarPlanner::plan_relaxed(
+    double start_x, double start_y,
+    double goal_x, double goal_y) {
+    // v3.2.10: 放宽模式 — 用 COST_LETHAL-1 阈值，允许穿越高膨胀区
+    //   仅在标准 plan() 失败时调用
+    current_threshold_ = COST_LETHAL - 1;  // 253 — 仅 LETHAL(254) 阻塞
+    relaxed_calls++;
+    auto path = plan_impl(start_x, start_y, goal_x, goal_y);
+    if (!path.empty()) relaxed_success++;
+    return path;
+}
+
+std::vector<std::pair<double, double>> AStarPlanner::plan_static_only_fallback(
+    double start_x, double start_y,
+    double goal_x, double goal_y) {
+    // P1-2.2: 纯静态层 fallback 终极重试
+    //   解决场景：动态障碍（行人）完全阻塞物理通路，导致前两级 plan/plan_relaxed 真无路径
+    //   方法：启用 static_only_mode_（只看静态层 static_cost，忽略 obstacle_cost）
+    //         同时用放宽阈值 (COST_LETHAL-1=253)
+    //   安全性：路径给出后仍由下游 DWA/跟踪控制做动态避障，仅用于提升 A* 成功率
+    static_only_mode_ = true;
+    current_threshold_ = COST_LETHAL - 1;
+    static_only_calls++;
+    auto path = plan_impl(start_x, start_y, goal_x, goal_y);
+    static_only_mode_ = false;  // 务必还原（成员变量重复使用）
+    if (!path.empty()) static_only_success++;
+    return path;
+}
+
+std::vector<std::pair<double, double>> AStarPlanner::plan_impl(
     double start_x, double start_y,
     double goal_x, double goal_y) {
     // 从 start 规划到 goal 的路径（世界坐标）。
@@ -127,25 +218,85 @@ std::vector<std::pair<double, double>> AStarPlanner::plan(
     auto start_time = std::chrono::steady_clock::now();
     int iterations = 0;
 
+    // P1-2.2: 重置"上次修正距离"标志（<0 = 未修正），一旦发生修正即写入距离
+    last_start_corrected_dist = -1.0;
+    last_goal_corrected_dist  = -1.0;
+
+    // R26a: 激活起点邻域 footprint 宽容（详见 costmap.h 的 START_RELIEF_RADIUS 注释）。
+    //   必须在任何 is_footprint_traversable/find_nearest_free 调用之前设置，
+    //   这样起点嵌墙自愈逻辑本身也能享受宽容，从而基本不再触发强拽。
+    relief_cx_ = start_x;
+    relief_cy_ = start_y;
+    relief_active_ = true;
+    // RAII：plan_impl 有多个 return 分支，用守卫确保离开时一定关闭宽容，
+    //   避免宽容态泄漏到 DWA / 后续碰撞检查等共用 planner 的调用。
+    struct ReliefGuard {
+        bool* flag;
+        ~ReliefGuard() { *flag = false; }
+    } relief_guard{&relief_active_};
+
     int sgx, sgy;
     int ggx, ggy;
     costmap_.world_to_grid(start_x, start_y, sgx, sgy);
     costmap_.world_to_grid(goal_x, goal_y, ggx, ggy);
 
-    // 起点/终点若阻塞则吸附到最近自由 cell
-    std::pair<int, int> s = find_nearest_free(sgx, sgy);
-    if (s.first == -1) {
-        return {};
-    }
-    sgx = s.first;
-    sgy = s.second;
+    // ------------------------------------------------------------------
+    // P1-2.2: 起点/终点嵌墙自愈
+    //   Step 1: 标准阈值 (PLAN_BLOCKED=120) 搜索最近自由 cell
+    //   Step 2: 失败则放宽阈值 (COST_LETHAL-1=253，仅致命壁阻塞) 重试
+    //   统计: 修正次数、修正距离、>0.5m 警告数
+    // ------------------------------------------------------------------
+    auto resolve_start_goal = [&](
+        int gx, int gy, bool is_start,
+        int& out_gx, int& out_gy) -> bool {
 
-    std::pair<int, int> g = find_nearest_free(ggx, ggy);
-    if (g.first == -1) {
-        return {};
-    }
-    ggx = g.first;
-    ggy = g.second;
+        // Step 1: 标准阈值
+        std::pair<int, int> free_cell = find_nearest_free(gx, gy);
+        if (free_cell.first == -1) {
+            // Step 2: 放宽阈值（仅 LETHAL(254) 视为阻塞）
+            free_cell = find_nearest_free(gx, gy, 50, COST_LETHAL - 1);
+        }
+        if (free_cell.first == -1) {
+            if (is_start) { fail_no_nearest_start++; last_fail_reason = 1; }
+            else          { fail_no_nearest_goal++;  last_fail_reason = 2; }
+            last_fail_sx = start_x; last_fail_sy = start_y;
+            last_fail_gx = goal_x;  last_fail_gy = goal_y;
+            return false;
+        }
+        out_gx = free_cell.first;
+        out_gy = free_cell.second;
+
+        // 计算修正距离（世界坐标）
+        if (out_gx != gx || out_gy != gy) {
+            double orig_wx, orig_wy, new_wx, new_wy;
+            costmap_.grid_to_world(gx,    gy,    orig_wx, orig_wy);
+            costmap_.grid_to_world(out_gx, out_gy, new_wx,  new_wy);
+            double dx = new_wx - orig_wx;
+            double dy = new_wy - orig_wy;
+            double dist_m = std::sqrt(dx*dx + dy*dy);
+            if (is_start) {
+                start_corrected_count++;
+                start_corrected_total_dist += dist_m;
+                if (dist_m > start_corrected_max_dist) {
+                    start_corrected_max_dist = dist_m;
+                }
+                if (dist_m > 0.5) {
+                    start_corrected_warn_count++;
+                }
+                last_start_corrected_dist = dist_m;
+            } else {
+                goal_corrected_count++;
+                last_goal_corrected_dist = dist_m;
+            }
+        } else {
+            if (is_start) last_start_corrected_dist = 0.0;
+            else          last_goal_corrected_dist  = 0.0;
+        }
+        return true;
+    };
+
+    if (!resolve_start_goal(sgx, sgy, /*is_start=*/true,  sgx, sgy)) return {};
+    if (!resolve_start_goal(ggx, ggy, /*is_start=*/false, ggx, ggy)) return {};
 
     if (sgx == ggx && sgy == ggy) {
         return {{goal_x, goal_y}};
@@ -167,10 +318,18 @@ std::vector<std::pair<double, double>> AStarPlanner::plan(
         auto now = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed = now - start_time;
         if (elapsed.count() > ASTAR_TIMEOUT_SEC) {
+            fail_timeout++;
+            last_fail_sx = start_x; last_fail_sy = start_y;
+            last_fail_gx = goal_x;  last_fail_gy = goal_y;
+            last_fail_reason = 3;
             return {};
         }
         ++iterations;
         if (iterations > MAX_NODES) {
+            fail_max_nodes++;
+            last_fail_sx = start_x; last_fail_sy = start_y;
+            last_fail_gx = goal_x;  last_fail_gy = goal_y;
+            last_fail_reason = 4;
             return {};
         }
 
@@ -205,6 +364,13 @@ std::vector<std::pair<double, double>> AStarPlanner::plan(
             // 排除起点（对应 Python 的 path[1:]）
             if (path.empty()) {
                 return {};
+            }
+            // v3.2.18 修复路径塌缩：直线短路径 [start, goal]（2 点）经 path.begin()+1
+            // 会塌缩为单点 [goal]，被下游 simulation.h 的 size()>=2 门控误判为失败 →
+            // 机器人停滞并每帧重规划（§25.4 问题1 的诱因之一）。
+            // 当排除起点后不足 2 点时，保留完整 [start, goal]，避免塌缩。
+            if (path.size() == 2) {
+                return path;  // 已是 [start, goal]，无需排除起点
             }
             return std::vector<std::pair<double, double>>(path.begin() + 1, path.end());
         }
@@ -246,7 +412,12 @@ std::vector<std::pair<double, double>> AStarPlanner::plan(
         }
     }
 
-    return {};  // 未找到路径
+    // 开放列表耗尽仍无路径
+    fail_no_path++;
+    last_fail_sx = start_x; last_fail_sy = start_y;
+    last_fail_gx = goal_x;  last_fail_gy = goal_y;
+    last_fail_reason = 5;
+    return {};
 }
 
 std::vector<std::pair<double, double>> AStarPlanner::smooth_path(

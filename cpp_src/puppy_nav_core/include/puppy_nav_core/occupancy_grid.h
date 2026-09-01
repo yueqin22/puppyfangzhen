@@ -20,11 +20,11 @@
 namespace puppy_nav_core {
 
 // 栅格地图配置
-constexpr int GRID_W = 100;              // 10m / 0.1m = 100 cells 宽
-constexpr int GRID_H = 80;               // 8m / 0.1m = 80 cells 高
+constexpr int GRID_W = 160;              // 10m / 0.1m = 100 cells 宽
+constexpr int GRID_H = 120;               // 8m / 0.1m = 80 cells 高
 constexpr double GRID_RESOLUTION = 0.1;  // 米/单元
-constexpr double ORIGIN_X = -5.0;        // grid (0,0) 对应的世界 x
-constexpr double ORIGIN_Y = -4.0;        // grid (0,0) 对应的世界 y
+constexpr double ORIGIN_X = -8.0;        // grid (0,0) 对应的世界 x
+constexpr double ORIGIN_Y = -6.0;        // grid (0,0) 对应的世界 y
 
 // Log-odds 界限（用于稳定的贝叶斯建图）
 constexpr float LOG_ODDS_MIN = -2.0f;
