@@ -1,0 +1,49 @@
+# C++ 仿真器参数配置 (v3.2.18i 基线)
+# ====================================================
+# 任务 P1-2.4: 仿真参数配置化
+# 优先级: 命令行 > 环境变量 > YAML > 默认值
+#
+# 用法:
+#   sim_test.exe --config config/sim_cpp.yaml [帧数] [报告间隔] [种子]
+#   或通过环境变量覆盖: USE_AMCL=0 sim_test.exe
+
+navigation:
+  use_amcl: true          # 启用 AMCL 定位 (USE_AMCL 环境变量覆盖)
+  use_rvo: true           # 启用 RVO 避障 (USE_RVO 环境变量覆盖)
+  use_imu_fusion: true    # 启用 IMU+LiDAR 互补滤波 (USE_IMU_FUSION 环境变量覆盖)
+  seed: 0                 # 随机种子, 0=随机 (SEED 环境变量覆盖)
+
+robot:
+  visual_max_speed: 2.0   # 最大线速度 (m/s)
+  arrival_radius: 0.35    # 到达目标判定半径 (m)
+  soft_skip_radius: 0.95  # 软跳点判定半径 (m)
+  soft_skip_frames: 600   # 软跳点超时帧数 (~20s @30fps)
+  hard_skip_frames: 1200  # 硬跳点超时帧数 (~40s @30fps)
+
+obstacles:
+  dynamic_clearance: 1.5    # 动态障碍物检测半径 (m)
+  collision_radius: 0.55    # 行人碰撞半径 (m)
+
+flee:
+  # v3.2.18i 调优的 flee 速度分档
+  speed_close: 1.2          # 近距行人 (<0.7m) flee 速度
+  speed_medium: 0.8         # 中距行人 (<1.0m) flee 速度
+  speed_multi: 0.5          # 多行人包围 (2+ 近距) flee 速度
+  near_thresh: 0.7          # 近距阈值
+  medium_thresh: 1.0        # 中距阈值
+  multi_count: 2            # 多行人计数阈值
+
+chasing:
+  # v3.2.18i 追逐检测阈值
+  dot_threshold: 0.3        # 追逐判定点积阈值
+  strong_dot_threshold: 0.8 # 强追逐判定点积阈值
+  prediction_short: 0.3     # 短期预测时间 (s)
+  prediction_long: 1.0      # 长期预测时间 (s)
+
+amcl:
+  n_particles: 300       # AMCL 粒子数
+  sigma_obs: 0.45        # 观测 sigma (减小会导致 A* 成功率暴跌)
+  z_max: 8.0             # LiDAR 最大量程 (m)
+  n_obs_rays: 72         # 观测光线数
+  kld_min: 50            # KLD 最小粒子数
+  kld_max: 500           # KLD 最大粒子数

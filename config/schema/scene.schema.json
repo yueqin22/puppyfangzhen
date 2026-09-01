@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PuppyNav Scene Configuration",
+  "description": "Single source of truth for scene geometry, robot, sensors, navigation params. Loaded by C++ bridge, Python sim, and (should be) UE5. See guihua20260812.md section 5.",
+  "type": "object",
+  "required": ["version", "grid", "robot", "lidar", "amcl", "obstacles", "patrol_targets", "pedestrians", "rooms"],
+  "properties": {
+    "version": {"type": ["string", "number"]},
+    "description": {"type": "string"},
+    "source": {"type": "string"},
+    "grid": {
+      "type": "object",
+      "required": ["width", "height", "resolution", "origin_x", "origin_y"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "resolution": {"type": "number", "exclusiveMinimum": 0},
+        "origin_x": {"type": "number"},
+        "origin_y": {"type": "number"}
+      }
+    },
+    "sim": {"type": "object"},
+    "robot": {
+      "type": "object",
+      "required": ["initial_pose", "radius_planning"],
+      "properties": {
+        "radius_planning": {"type": "number", "exclusiveMinimum": 0},
+        "radius_cbf": {"type": "number", "exclusiveMinimum": 0},
+        "cbf_d_safe": {"type": "number"},
+        "cbf_d_critical": {"type": "number"},
+        "cbf_alpha": {"type": "number"},
+        "cbf_max_speed": {"type": "number"},
+        "initial_pose": {
+          "type": "object",
+          "required": ["x", "y", "yaw"],
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "yaw": {"type": "number"}
+          }
+        }
+      }
+    },
+    "lidar": {
+      "type": "object",
+      "required": ["n_rays", "max_range", "angle_min", "angle_max"],
+      "properties": {
+        "n_rays": {"type": "integer", "minimum": 1},
+        "max_range": {"type": "number", "exclusiveMinimum": 0},
+        "angle_min": {"type": "number"},
+        "angle_max": {"type": "number"}
+      }
+    },
+    "amcl": {
+      "type": "object",
+      "required": ["n_particles", "sigma_obs"],
+      "properties": {
+        "n_particles": {"type": "integer", "minimum": 1},
+        "sigma_obs": {"type": "number", "exclusiveMinimum": 0},
+        "z_max": {"type": "number"},
+        "n_obs_rays": {"type": "integer"},
+        "kld_min": {"type": "integer"},
+        "kld_max": {"type": "integer"},
+        "kidnap_recover_spread": {"type": "number"}
+      }
+    },
+    "obstacles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "xmin", "ymin", "xmax", "ymax"],
+        "properties": {
+          "name": {"type": "string"},
+          "xmin": {"type": "number"},
+          "ymin": {"type": "number"},
+          "xmax": {"type": "number"},
+          "ymax": {"type": "number"}
+        }
+      }
+    },
+    "patrol_targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "x", "y"],
+        "properties": {
+          "name": {"type": "string"},
+          "x": {"type": "number"},
+          "y": {"type": "number"},
+          "yaw": {"type": "number"}
+        }
+      }
+    },
+    "pedestrians": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "x", "y", "vx", "vy", "radius"],
+        "properties": {
+          "name": {"type": "string"},
+          "x": {"type": "number"},
+          "y": {"type": "number"},
+          "vx": {"type": "number"},
+          "vy": {"type": "number"},
+          "radius": {"type": "number"}
+        }
+      }
+    },
+    "rooms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "test"],
+        "properties": {
+          "name": {"type": "string"},
+          "test": {"type": "string"}
+        }
+      }
+    },
+    "path_follower": {"type": "object"}
+  }
+}

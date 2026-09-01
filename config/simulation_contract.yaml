@@ -1,0 +1,73 @@
+# simulation_contract.yaml — Puppy 仿真导航统一契约 (单一参数源)
+# =====================================================================
+# 依据 jihua20260818.md 模块一 (§4) 制定。
+# 所有模块 (Python / C++ / ROS2 Nav2 / UE5) 必须读取同一来源。
+# 优先级: 命令行 > 环境变量 > 本文件 > 代码默认值。
+#
+# 加载器必须:
+#   - 启动时打印配置版本与文件 SHA-256。
+#   - 任何关键参数缺失时直接启动失败 (exit code 5)。
+#   - 禁止在核心算法中静默使用与配置不同的默认值。
+#   - 校验 footprint 闭合 / 不自交 / 面积 > 0。
+#   - 校验 inflation_radius >= robot_radius + safety_margin。
+#   - 校验 goal_tolerance <= 关键门宽的一半。
+#
+# schema_version 用于跨模块一致性检查。
+schema_version: 1
+
+robot:
+  name: puppy
+  radius: 0.35              # 机器人半径 (m) —— 所有模块统一
+  length: 0.70
+  width: 0.50
+  height: 0.55
+  safety_margin: 0.08
+  footprint:                # 4 角点 (m, 机器人局部坐标, 逆时针)
+    - [-0.35, -0.25]
+    - [-0.35,  0.25]
+    - [ 0.35,  0.25]
+    - [ 0.35, -0.25]
+
+map:
+  resolution: 0.05          # 栅格分辨率 (m/cell)
+  origin_x: -8.0
+  origin_y: -6.0
+  width: 320                # cells
+  height: 240               # cells
+  unknown_is_blocked: true
+
+planning:
+  connected: 8
+  lethal_cost: 254
+  inscribed_cost: 253
+  plan_blocked_cost: 110
+  inflation_radius: 0.43    # >= robot_radius(0.35) + safety_margin(0.08)
+  min_path_clearance: 0.08
+  goal_tolerance: 0.35
+  max_planning_time_ms: 100
+
+local_avoidance:
+  max_speed: 2.0            # m/s
+  max_acceleration: 1.0     # m/s^2
+  max_angular_speed: 2.0     # rad/s
+  dynamic_clearance: 1.5    # m
+  emergency_stop_distance: 0.35
+  command_timeout_sec: 0.5
+
+simulation:
+  default_frames: 300
+  max_frames: 108000         # 1 小时 @30Hz
+  progress_interval_frames: 30
+  hard_timeout_sec: 60
+  seed: 1                    # 固定种子保证可复现
+
+acceptance:
+  max_collisions: 0
+  max_wall_penetrations: 0
+  max_planning_failures: 0
+  max_goal_misses: 0
+  max_stall_events: 0
+  max_average_localization_error: 0.20
+  max_peak_localization_error: 0.75
+  min_required_rooms: 8
+  require_full_round: true
