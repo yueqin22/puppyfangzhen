@@ -1,0 +1,97 @@
+# Configuration for MiniCPM-RobotTrack integration on Puppy robot
+# Based on OpenBMB/MiniCPM-RobotTrack go2_runtime.yaml & 20260828.md
+
+vision_bridge_node:
+  ros__parameters:
+    camera_source: "synthetic"       # Options: "sim", "realsense", "go2", "synthetic", "file"
+    publish_fps: 10.0
+    output_width: 384
+    output_height: 384
+    # Gazebo publishes the simulated RGB stream on /camera/depth_camera/image_raw
+    # (640x480 rgb8). Do NOT leave this at its old default "/camera/color/image_raw":
+    # that is this node's own OUTPUT topic, which makes it subscribe to itself and
+    # never receive a frame (deadlock) in "sim" mode.
+    input_topic: "/camera/depth_camera/image_raw"
+    frame_id: "camera_color_optical_frame"
+
+minicpm_track_node:
+  ros__parameters:
+    mode: "dry-run"                  # Options: "dry-run", "sim", "live-arm"
+    backend: "mock"                  # Options: "mock", "http"
+    server_url: "http://127.0.0.1:5801"
+    instruction: "Follow the person ahead"
+    waypoint_strategy: "first"       # Options: "first", "two-step", "dx4-dw1"
+    inference_rate_hz: 10.0
+    inference_timeout_sec: 0.5
+
+track_cmd_adapter_node:
+  ros__parameters:
+    mode: "dry-run"
+    vx_positive_scale: 1.5
+    vx_negative_scale: 2.0
+    vx_positive_deadband: 0.03
+    vx_negative_deadband: 0.0
+    max_vx: 0.15                     # Conservative safety release default (m/s)
+    wz_scale: 1.2
+    deadband_wz: 0.0
+    max_wz: 0.30                     # Conservative safety release default (rad/s)
+    yaw_boost: 1.0
+    yaw_boost_threshold: 0.10
+    yaw_boost_max: 0.30
+    ema_alpha: 1.0
+    cmd_timeout_ms: 350.0            # Strict timeout stop if no fresh intent in 350ms
+    min_obstacle_distance: 0.35      # Safe distance threshold from LiDAR scan (meters)
+    # Only evaluate obstacles within +/-30 deg of the direction of travel.
+    # Puppy's body-mounted LiDAR sees its own four legs (measured arcs at
+    # +/-49.6..64.7 deg at ~0.12 m and +/-144.9..152.9 deg at ~0.20 m). A global
+    # min() over all 360 deg therefore latched the override on permanently and the
+    # robot could never drive forward, even with 2 m of clearance straight ahead.
+    obstacle_arc_deg: 60.0
+    # Percentile (not absolute min) of the ranges inside that arc. Self-returns
+    # are narrow (~10% of the arc) while a wall covers most of it, so this keeps
+    # the rear legs from latching the override during reverse. At 60 deg / 20%
+    # an obstacle wider than ~7 cm is still caught at the 0.35 m stop distance.
+    obstacle_percentile: 20.0
+    confidence_threshold: 0.35
+    publish_rate_hz: 20.0
+    # Motion demanded but continuously refused for this long is reported as a
+    # BLOCKED_ESCALATION instead of a plain LIDAR_OBSTACLE_CLOSE. Without it a
+    # robot wedged against a wall looks identical to one that is briefly yielding.
+    blocked_escalation_sec: 5.0
+    blocked_log_period_sec: 5.0    # throttle for the operator-visible warning
+    # Only drive the base while the mission is in one of these phases. The
+    # tracker used to command motion in every phase: during NAVIGATE_TO_ZONE it
+    # drove away from the goal towards a target it had been handed at node
+    # startup, and the mission failed with a misleading "blocked by obstacle".
+    gate_by_mission_phase: true
+    tracking_phases: ["VISUAL_TRACKING"]
+
+mission_grounder_node:
+  ros__parameters:
+    default_zone: "backyard"
+    # Base (floor) for the navigation deadline. The effective deadline is armed
+    # on phase entry as `base + distance / navigation_speed_mps * navigation_slack`
+    # (see MissionGrounderNode._arm_phase_timeout): a flat 10 s was unachievable
+    # for a robot capped at max_vx = 0.15 m/s crossing a 5x5 m room (13-33 s),
+    # and was only survivable because a timeout used to count as "arrived".
+    navigation_timeout_sec: 15.0
+    return_timeout_sec: 15.0
+    navigation_speed_mps: 0.10       # conservative vs the 0.15 m/s velocity cap
+    navigation_slack: 2.0
+    # A sustained BLOCKED_ESCALATION for this long aborts the mission early
+    # rather than waiting out the navigation timeout (robot is physically stuck).
+    # MUST satisfy: blocked_escalation_sec (5) < blocked_abort_sec < timeouts (10)
+    # -- the grounder only counts a block once the adapter has escalated it, and
+    # if this exceeds the timeouts the generic "timed out" branch always wins,
+    # hiding the far more useful "blocked by obstacle" reason.
+    blocked_abort_sec: 8.0
+    arrival_radius_m: 0.4
+    # Waypoints are map-frame and goals are published with frame_id "map", so
+    # navigation must be judged against the MAP-frame pose from TF, not /odom.
+    # Measured map->odom on the live sim: [-0.152, -0.056] @ -3.27 deg, i.e. the
+    # two frames disagreed by 0.24 m -- 60% of the 0.4 m arrival radius.
+    map_frame: "map"
+    base_frame: "base_footprint"
+    tf_lookup_timeout_sec: 0.05
+    default_dwell_sec: 5.0
+    tracking_timeout_sec: 20.0
