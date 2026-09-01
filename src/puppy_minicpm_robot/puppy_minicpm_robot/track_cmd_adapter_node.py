@@ -51,8 +51,10 @@ class TrackCmdAdapterNode(Node):
         self.blocked_since: Optional[float] = None
         self._last_blocked_log = 0.0
         # Latest mission phase reported by mission_grounder_node. `None` means no
-        # mission has been seen yet, in which case tracking is allowed (the node
-        # is usable on its own for teleop-style following).
+        # mission has been seen yet, in which case the base stands by idle (it
+        # must NOT auto-follow a phantom target and ram the wall before a mission
+        # is even dispatched). mission_grounder only publishes once a mission is
+        # loaded, so this stays None until the first dispatch.
         self.mission_phase: Optional[str] = None
         # Navigation runtime state (populated from /goal_pose + mission_status).
         self.nav_goal: Optional[List[float]] = None   # [x, y] map frame
@@ -234,7 +236,11 @@ class TrackCmdAdapterNode(Node):
         self.has_nav_goal = True
 
     def _is_phase_gated(self) -> bool:
-        """True when the mission is in a phase where tracking must not drive.
+        """True when the tracker must not drive the base.
+
+        Tracking is only the authority during `tracking_phases` (VISUAL_TRACKING).
+        Everywhere else -- including when no mission has been seen yet -- the
+        tracker stays hands-off and the base holds still.
 
         The tracker used to command the base in every phase. Measured on the
         live sim: during NAVIGATE_TO_ZONE (goal [1.0, 0.0], i.e. behind the
@@ -242,13 +248,15 @@ class TrackCmdAdapterNode(Node):
         target at dx=+0.6, away from the goal, until the wall stopped it and the
         mission failed with a misleading "blocked by obstacle".
 
-        With no mission seen yet, tracking stays enabled so the node remains
-        usable on its own for teleop-style following.
+        And with no mission seen yet (mission_phase is None) the tracker
+        auto-followed that same phantom target at startup and rammed the +x wall
+        before any mission was ever dispatched. No-mission is now treated as a
+        gate (standby), not as teleop-follow.
         """
         if not self.gate_by_mission_phase:
             return False
         if self.mission_phase is None:
-            return False
+            return True
         return self.mission_phase not in self.tracking_phases
 
     def scan_callback(self, msg: 'LaserScan'):
@@ -321,15 +329,29 @@ class TrackCmdAdapterNode(Node):
         )
 
         # 0. Mission phase gate. Tracking is only the authority in tracking_phases.
-        # Everywhere else the tracker must not drive the base. Two sub-cases:
+        # Everywhere else the tracker must not drive the base. Three sub-cases:
         #   * a /goal_pose is available -> the adapter becomes the actuator and
         #     drives toward it (navigating=True, NOT phase_gated);
-        #   * no goal -> voluntary yield, hold still (phase_gated=True).
+        #   * no mission at all -> deliberate standby, hold still (standby=True);
+        #   * mission running but not in a tracking phase -> voluntary yield
+        #     (phase_gated=True).
         # The gate is checked first so the reported reason is unambiguous and the
         # hold is never mistaken for a LiDAR block.
         if self._is_phase_gated():
             if self._nav_target_available():
                 target_vx, target_wz, status = self._nav_target_velocity(status, current_time)
+            elif self.mission_phase is None:
+                # No mission has been dispatched: stand by idle. Do NOT auto-follow
+                # a phantom target (the mock backend reports dx=+0.6 forever), or
+                # the robot drives into the wall on startup.
+                status.standby = True
+                status.active_override_reason = (
+                    "STANDBY (no active mission: tracker idle, base held)"
+                )
+                self.current_smoothed_vx = 0.0
+                self.current_smoothed_wz = 0.0
+                self.blocked_since = None
+                return 0.0, 0.0, status
             else:
                 status.phase_gated = True
                 status.active_override_reason = (

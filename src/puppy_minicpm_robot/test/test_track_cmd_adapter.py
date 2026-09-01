@@ -21,6 +21,11 @@ class TestTrackCmdAdapter:
         node.obstacle_arc_deg = 60.0
         node.obstacle_percentile = 20.0
         node.confidence_threshold = 0.35
+        # Default to VISUAL_TRACKING so the tracker-driven logic (scaling,
+        # clamping, timeout, lidar) is exercised in this fixture. The node's
+        # real default is mission_phase=None -> standby (no task), which is now
+        # the desired behaviour and is covered by the dedicated standby tests.
+        node.mission_phase = "VISUAL_TRACKING"
         return node
 
     def test_velocity_clamping_and_scaling(self, adapter):
@@ -344,18 +349,57 @@ class TestTrackCmdAdapter:
     # Mission phase gating: the tracker must not drive outside VISUAL_TRACKING
     # ------------------------------------------------------------------
 
-    def test_tracker_drives_when_no_mission_seen(self, adapter):
-        """With no mission, tracking stays enabled (teleop-style following)."""
+    def test_tracker_stands_by_when_no_mission_seen(self, adapter):
+        """No mission -> base stands by idle, it must NOT auto-follow.
+
+        Regression: previously the tracker drove toward a phantom target at
+        dx=+0.6 before any mission was dispatched and rammed the +x wall.
+        """
         adapter.gate_by_mission_phase = True
         adapter.tracking_phases = ["VISUAL_TRACKING"]
         adapter.mission_phase = None
 
         now = time.time()
         adapter.last_intent_time = now
-        vx, _, status = adapter.compute_velocity(self._forward_intent(), now)
+        vx, wz, status = adapter.compute_velocity(self._forward_intent(), now)
 
-        assert vx > 0.0
+        assert vx == 0.0
+        assert wz == 0.0
+        assert status.standby is True
         assert status.phase_gated is False
+        assert status.navigating is False
+        assert "STANDBY" in status.active_override_reason
+
+    def test_standby_holds_despite_phantom_target(self, adapter):
+        """The mock backend reports dx=+0.6 forever; standby must ignore it.
+
+        This is exactly the startup condition that used to drive the robot into
+        the wall. With no mission the tracker is not the authority, so a strong
+        forward intent must be discarded entirely.
+        """
+        adapter.gate_by_mission_phase = True
+        adapter.tracking_phases = ["VISUAL_TRACKING"]
+        adapter.mission_phase = None
+
+        # A loud "person straight ahead" intent, the wall-chasing phantom.
+        phantom = TrackIntent(
+            instruction="Follow person",
+            target_detected=True,
+            confidence=0.95,
+            dx=0.6,
+            dy=0.0,
+            raw_vx=0.15,
+        )
+        now = time.time()
+        adapter.last_intent_time = now
+        vx, wz, status = adapter.compute_velocity(phantom, now)
+
+        assert vx == 0.0
+        assert wz == 0.0
+        assert status.standby is True
+        # A standby hold is arbitration, not an obstruction.
+        assert status.lidar_override is False
+        assert status.blocked_escalated is False
 
     def test_tracker_drives_during_visual_tracking(self, adapter):
         adapter.mission_phase = "VISUAL_TRACKING"

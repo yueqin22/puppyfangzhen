@@ -175,6 +175,11 @@ class SafetyStatus:
     # actuator exists and is physically obstructed -- so it must NOT be confused
     # with phase_gated (voluntary yield) nor with a missing actuator.
     navigating: bool = False
+    # True when there is no active mission at all, so the base is deliberately
+    # held idle (standby) rather than auto-following a phantom target. Distinct
+    # from phase_gated (a mission is running, the tracker just isn't its turn)
+    # and from navigating (an actuator exists and is moving).
+    standby: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -188,4 +193,5 @@ class SafetyStatus:
             "blocked_escalated": self.blocked_escalated,
             "phase_gated": self.phase_gated,
             "navigating": self.navigating,
+            "standby": self.standby,
         }
