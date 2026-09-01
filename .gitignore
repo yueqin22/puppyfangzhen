@@ -84,3 +84,31 @@ robot_src/
 
 # WorkBuddy 项目记忆（含本地备忘，绝不入库）
 .workbuddy/
+
+# C++ 离线仿真构建/运行产物 (cpp_src)
+cpp_src/**/build/
+cpp_src/**/build_protocol/
+*.log.err
+*.log.out
+*.err
+*.out
+build_out.txt
+build_err.txt
+*.pid.txt
+*.ninja
+.ninja_log
+.ninja_deps
+CMakeCache.txt
+cmake_install.cmake
+*.bak_*
+*_before_comment_cleanup*
+
+# C++ 仿真结果/日志（不入仓）
+cpp_src/sim/results/
+cpp_src/sim/results.txt
+cpp_src/sim/*_results.txt
+cpp_src/sim/batch_results.txt
+cpp_src/sim/full_10seed_results.txt
+cpp_src/sim/seed_2_6_10_results.txt
+cpp_src/sim/v3218*_results.txt
+cpp_src/tests/build_pv/
