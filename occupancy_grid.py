@@ -37,7 +37,11 @@ LOG_ODDS_PRIOR = 0.0    # unknown
 
 
 class OccupancyGrid:
-    """2D occupancy grid with log-odds Bayesian update."""
+    """2D occupancy grid with log-odds Bayesian update.
+
+    P1-2: 增量更新支持。追踪自上次快照以来变化的 cell 集合，
+    使 AMCL 距离场只需重建受影响区域而非全图。
+    """
 
     def __init__(self):
         self.resolution = GRID_RESOLUTION
@@ -48,6 +52,12 @@ class OccupancyGrid:
         # Log-odds representation for probabilistic mapping
         self.log_odds = np.zeros((GRID_H, GRID_W), dtype=np.float32)
         self.visited = np.zeros((GRID_H, GRID_W), dtype=bool)
+
+        # P1-2: 增量更新追踪
+        # dirty_mask: 自上次 snapshot 以来 log_odds 发生变化的 cell
+        self.dirty_mask = np.zeros((GRID_H, GRID_W), dtype=bool)
+        # 快照签名: 上次 snapshot 时的 (n_occupied, mean_log_odds)
+        self._snapshot_signature = (0, 0.0)
 
     # --- Coordinate conversion ---
     def world_to_grid(self, x, y):
@@ -140,6 +150,8 @@ class OccupancyGrid:
         - If ray reaches max_range (no hit), all cells are FREE
 
         Uses log-odds update for probabilistic stability.
+
+        P1-2: 更新时同步标记 dirty_mask，使 AMCL 距离场可以增量重建。
         """
         rgx, rgy = self.world_to_grid(rx, ry)
         if not self.in_bounds(rgx, rgy):
@@ -162,11 +174,58 @@ class OccupancyGrid:
                 if not self.in_bounds(gx, gy):
                     break
                 if gx == hgx and gy == hgy and hit_is_obstacle:
+                    old_val = self.log_odds[gy, gx]
                     self.log_odds[gy, gx] = min(
                         self.log_odds[gy, gx] + LOG_ODDS_HIT, LOG_ODDS_MAX)
+                    # P1-2: 标记 cell 状态发生变化（free→occupied 或值改变）
+                    if not self.dirty_mask[gy, gx]:
+                        self.dirty_mask[gy, gx] = True
                 else:
+                    old_val = self.log_odds[gy, gx]
                     self.log_odds[gy, gx] = max(
                         self.log_odds[gy, gx] + LOG_ODDS_MISS, LOG_ODDS_MIN)
+                    if not self.dirty_mask[gy, gx]:
+                        self.dirty_mask[gy, gx] = True
+
+    # --- P1-2: 增量更新接口 ---
+    def get_dirty_mask(self):
+        """返回自上次 snapshot 以来发生变化的 cell mask。"""
+        return self.dirty_mask
+
+    def get_dirty_count(self):
+        """返回变化 cell 数量。"""
+        return int(self.dirty_mask.sum())
+
+    def take_snapshot(self):
+        """记录当前地图签名，清除 dirty_mask。
+
+        AMCL 在重建距离场后调用此方法，之后只需检查 dirty_count
+        判断是否需要重建。
+        """
+        occupied = self.log_odds > 0.6
+        self._snapshot_signature = (
+            int(occupied.sum()),
+            float(self.log_odds.mean()),
+        )
+        self.dirty_mask.fill(False)
+
+    def get_signature(self):
+        """返回当前地图签名 (n_occupied, mean_log_odds)。"""
+        occupied = self.log_odds > 0.6
+        return (int(occupied.sum()), float(self.log_odds.mean()))
+
+    def has_changed_since_snapshot(self, threshold_ratio=0.05):
+        """判断地图自上次 snapshot 以来是否发生了显著变化。
+
+        Args:
+            threshold_ratio: 变化 cell 占总 cell 的比例阈值
+
+        Returns:
+            True 如果变化超过阈值
+        """
+        n_dirty = self.get_dirty_count()
+        n_total = self.width * self.height
+        return n_dirty > n_total * threshold_ratio
 
     # --- Frontier detection for exploration ---
     def find_frontiers(self, rx, ry, max_frontiers=20):

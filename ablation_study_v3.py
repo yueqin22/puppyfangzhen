@@ -76,6 +76,30 @@ from typing import List, Dict, Any, Tuple, Optional
 
 import numpy as np
 
+# 引入统一指标校验模块 (P0-2/P0-4)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from metrics_schema import (
+        is_invalid_metric_value, mark_demo_results, get_results_dir,
+    )
+    _METRICS_SCHEMA_OK = True
+except ImportError:
+    _METRICS_SCHEMA_OK = False
+
+    def is_invalid_metric_value(value):
+        """兜底实现：当 metrics_schema 不可用时仅过滤 None。"""
+        return value is None
+
+    def mark_demo_results(summary):
+        summary["mode"] = "demo"
+        return summary
+
+    def get_results_dir(mode="official"):
+        base = os.path.dirname(os.path.abspath(__file__))
+        if mode == "demo":
+            return os.path.join(base, "experiment_results", "demo")
+        return os.path.join(base, "experiment_results", "official")
+
 # === 全局配置 ===
 N_TRIALS = 5            # 重复实验次数（5 × 8 = 40 次实验）
 MAX_FRAMES = 4000       # 单次实验帧数上限
@@ -1085,7 +1109,7 @@ def analyze_results(results_dir: Path = None,
         metric_values[key] = {}
         for config in config_names:
             values = [t[key] for t in all_results[config]
-                      if t[key] >= 0]
+                      if not is_invalid_metric_value(t[key])]
             if not values:
                 row += f" {'N/A':>14s}"
                 continue
@@ -1150,7 +1174,7 @@ def analyze_results(results_dir: Path = None,
             perf_full = {}
             for key, _, _ in METRICS_SPEC:
                 vals = [t[key] for t in all_results["proposed_full"]
-                        if t[key] >= 0]
+                        if not is_invalid_metric_value(t[key])]
                 if vals:
                     perf_full[key] = float(np.mean(vals))
 
@@ -1164,7 +1188,7 @@ def analyze_results(results_dir: Path = None,
                     for key, _, _ in METRICS_SPEC:
                         vals = [t[key] for t in
                                 all_results[config.name]
-                                if t[key] >= 0]
+                                if not is_invalid_metric_value(t[key])]
                         if vals:
                             perf[key] = float(np.mean(vals))
                     if config.is_full:
@@ -1225,6 +1249,7 @@ def analyze_results(results_dir: Path = None,
     import datetime
     summary = {
         "timestamp": datetime.datetime.now().isoformat(),
+        "mode": "official",  # P0-4: 明确标注结果模式
         "n_trials_per_config": {c: len(all_results[c])
                                 for c in config_names},
         "n_configs": len(config_names),
@@ -1238,7 +1263,7 @@ def analyze_results(results_dir: Path = None,
         summary["metrics"][key] = {}
         for config in config_names:
             values = [t[key] for t in all_results[config]
-                      if t[key] >= 0]
+                      if not is_invalid_metric_value(t[key])]
             if values:
                 mean, ci = StatisticalAnalysis.confidence_interval(values)
                 summary["metrics"][key][config] = {
@@ -1373,7 +1398,7 @@ def run_demo():
         metric_values[key] = {}
         for config in config_names:
             values = [t[key] for t in all_results[config]
-                      if t[key] >= 0]
+                      if not is_invalid_metric_value(t[key])]
             if not values:
                 row += f" {'N/A':>13s}"
                 continue
@@ -1431,7 +1456,7 @@ def run_demo():
     perf_full = {}
     for key, _, _ in METRICS_SPEC:
         vals = [t[key] for t in all_results["proposed_full"]
-                if t[key] >= 0]
+                if not is_invalid_metric_value(t[key])]
         if vals:
             perf_full[key] = float(np.mean(vals))
 
@@ -1444,7 +1469,7 @@ def run_demo():
         perf = {}
         for key, _, _ in METRICS_SPEC:
             vals = [t[key] for t in all_results[config.name]
-                    if t[key] >= 0]
+                    if not is_invalid_metric_value(t[key])]
             if vals:
                 perf[key] = float(np.mean(vals))
         if config.ablated_module is not None:
@@ -1468,8 +1493,8 @@ def run_demo():
                else "负协同（1+1<2，模块相互抑制）")
     print(f"  结论: {verdict}")
 
-    # === 输出目录准备 ===
-    demo_out = RESULTS_DIR / "demo"
+    # === 输出目录准备 (P0-4: demo 结果隔离到 experiment_results/demo) ===
+    demo_out = Path(get_results_dir("demo")) / "ablation"
     demo_out.mkdir(parents=True, exist_ok=True)
 
     # === 瀑布图 ===
@@ -1509,7 +1534,7 @@ def run_demo():
         summary["metrics"][key] = {}
         for config in config_names:
             values = [t[key] for t in all_results[config]
-                      if t[key] >= 0]
+                      if not is_invalid_metric_value(t[key])]
             if values:
                 mean, ci = StatisticalAnalysis.confidence_interval(values)
                 summary["metrics"][key][config] = {

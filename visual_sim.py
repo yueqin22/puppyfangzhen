@@ -51,11 +51,11 @@ SOFT_SKIP_FRAMES = FPS * 20
 HARD_SKIP_FRAMES = FPS * 40
 DYNAMIC_CLEARANCE = 0.85  # 动态安全圈
 
-# 世界坐标范围 → 屏幕坐标
-WORLD_X_MIN = -5.5
-WORLD_X_MAX = 5.5
-WORLD_Y_MIN = -4.5
-WORLD_Y_MAX = 4.5
+# 世界坐标范围 → 屏幕坐标（适配v5.1 16m×12m布局）
+WORLD_X_MIN = -8.5
+WORLD_X_MAX = 8.5
+WORLD_Y_MIN = -6.5
+WORLD_Y_MAX = 6.5
 
 MARGIN = 50  # 边距(像素)
 
@@ -293,6 +293,16 @@ class VisualSimulator:
         pen, _ = check_wall_penetration(rx, ry, x, y, OBSTACLES_BBOX)
         return (not pen) and is_position_safe(x, y, OBSTACLES_BBOX)
 
+    def _is_near_doorway(self, x, y):
+        """判断机器人是否在门道附近(1.0m以内)"""
+        for pt in PATROL_POINTS:
+            if pt.get('waypoint', False):
+                dx = x - pt['x']
+                dy = y - pt['y']
+                if math.sqrt(dx * dx + dy * dy) < 1.0:
+                    return True
+        return False
+
     def _apply_dynamic_clearance(self, rx, ry, step_x, step_y, ang, tx, ty):
         min_next, nearest = self._min_dynamic_distance(step_x, step_y)
         if min_next >= DYNAMIC_CLEARANCE or nearest is None:
@@ -483,19 +493,25 @@ class VisualSimulator:
                 hys = [p[1] for p in self._stall_history]
                 net_spread = (max(hxs) - min(hxs)) + (max(hys) - min(hys))
                 if net_spread < 0.15:  # 2秒内净移动<15cm = 卡住
-                    self._stall_timer += 1
+                    if self.current_action != 'wait':
+                        self._stall_timer += 1
+                    else:
+                        self._stall_timer = max(0, self._stall_timer - 1)
                 else:
                     self._stall_timer = max(0, self._stall_timer - 1)  # 缓慢恢复
             else:
                 self._stall_timer = max(0, self._stall_timer - 1)
 
-            # 根据卡住程度设置CBF参数（每帧重新设置，避免被else覆盖）
+            # 根据卡住程度及地理区域（门道 vs 阔域）设置 CBF 参数
             if self._recovery_mode:
                 self.cbf.d_safe = 0.12
                 self.cbf.alpha = 0.8
             elif self._stall_timer > 60:
                 self.cbf.d_safe = 0.15  # 卡2秒，降低安全阈值
                 self.cbf.alpha = 0.8
+            elif self._is_near_doorway(rx, ry):
+                self.cbf.d_safe = 0.20  # 门道区域自适应降低安全阈值
+                self.cbf.alpha = 1.5
             else:
                 self.cbf.d_safe = 0.35  # 正常
                 self.cbf.alpha = 2.0
@@ -672,10 +688,13 @@ class VisualSimulator:
             ys = [p[1] for p in self._stall_positions]
             spread = (max(xs) - min(xs)) + (max(ys) - min(ys))
             if spread < 0.15:
-                self._stall_count += 1
-                # 持续卡住超过90帧(3秒)才算一次stall事件
-                if self._stall_count == 90:
-                    self.stall_events += 1
+                if self.current_action != 'wait':
+                    self._stall_count += 1
+                    # 持续卡住超过90帧(3秒)才算一次stall事件
+                    if self._stall_count == 90:
+                        self.stall_events += 1
+                else:
+                    self._stall_count = max(0, self._stall_count - 1)
             else:
                 self._stall_count = 0
 

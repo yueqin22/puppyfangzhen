@@ -54,6 +54,13 @@ try:
 except Exception:
     _HAS_PUPPYPI = False
 
+try:
+    import rclpy
+    _HAS_RCLPY = True
+except Exception:
+    _HAS_RCLPY = False
+
+
 
 class TestHardwareInterface(unittest.TestCase):
     """测试硬件抽象接口"""
@@ -905,5 +912,68 @@ class TestStabilitySimLoopException(unittest.TestCase):
         hw.shutdown()
 
 
+@unittest.skipUnless(_HAS_RCLPY, "requires rclpy (ROS2 Python)")
+class TestAdapterNodes(unittest.TestCase):
+    """测试 StatusAdapterNode 与 ModeAdapterNode 节点封装"""
+
+    def test_status_adapter_12_dof(self):
+        """测试 StatusAdapterNode 包含 12 DOF 关节视角"""
+        from puppypi_adapter.status_adapter_node import StatusAdapterNode
+        node = StatusAdapterNode()
+        self.assertEqual(len(node.joint_names), 12)
+        self.assertIn('FR_hip_yaw_joint', node.joint_names)
+        self.assertIn('RL_knee_joint', node.joint_names)
+        if node.hw:
+            node.hw.shutdown()
+        node.destroy_node()
+
+    def test_status_adapter_fallback(self):
+        """测试 use_sim=False 时的优雅降级"""
+        from puppypi_adapter.status_adapter_node import StatusAdapterNode
+        node = StatusAdapterNode()
+        node.use_sim = False
+        # 不引发未捕获的 ImportError
+        node._poll_status()
+        if node.hw:
+            node.hw.shutdown()
+        node.destroy_node()
+
+    def test_mode_adapter_posture_commands(self):
+        """测试 ModeAdapterNode 姿态命令接收与分发"""
+        from puppypi_adapter.mode_adapter_node import ModeAdapterNode
+        from std_msgs.msg import String, Bool
+        node = ModeAdapterNode()
+        # 发送 STAND 姿态
+        msg = String()
+        msg.data = 'STAND'
+        node._on_posture_cmd(msg)
+        self.assertEqual(node.current_posture, 'STAND')
+
+        # 发送 FREEZE 姿态
+        msg.data = 'FREEZE'
+        node._on_posture_cmd(msg)
+        self.assertEqual(node.current_posture, 'FREEZE')
+        if node.hw:
+            self.assertTrue(node.hw.emergency_stopped)
+
+        # 发送 RECOVER 姿态
+        msg.data = 'RECOVER'
+        node._on_posture_cmd(msg)
+        self.assertEqual(node.current_posture, 'RECOVER')
+        if node.hw:
+            self.assertFalse(node.hw.emergency_stopped)
+
+        # 使能电机
+        enable_msg = Bool()
+        enable_msg.data = True
+        node._on_enable(enable_msg)
+        self.assertTrue(node.motion_enabled)
+
+        if node.hw:
+            node.hw.shutdown()
+        node.destroy_node()
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+

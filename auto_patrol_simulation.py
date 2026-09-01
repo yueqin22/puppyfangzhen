@@ -194,6 +194,19 @@ OBSTACLES_BBOX = [
 # ============================================================
 # 动态障碍物（模拟行人/宠物等突然出现的障碍）
 # ============================================================
+# Unified scene source: keep 2D patrol and scene inspection aligned.
+_SCENE_CONFIG = os.path.join(PROJECT_ROOT, "config", "scene_home.json")
+if os.path.exists(_SCENE_CONFIG):
+    try:
+        with open(_SCENE_CONFIG, "r", encoding="utf-8") as _scene_file:
+            _scene_data = json.load(_scene_file)
+        if _scene_data.get("obstacles"):
+            OBSTACLES_BBOX = [(item["name"], (item["xmin"], item["ymin"], item["xmax"], item["ymax"])) for item in _scene_data["obstacles"]]
+        if _scene_data.get("patrol_targets"):
+            PATROL_POINTS = [{"name": item["name"], "x": item["x"], "y": item["y"], "yaw": item.get("yaw", 0.0), "room": item.get("room", ""), "waypoint": item.get("waypoint", False)} for item in _scene_data["patrol_targets"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
 class DynamicObstacle:
     """动态障碍物：模拟行人在场景中走动"""
 
