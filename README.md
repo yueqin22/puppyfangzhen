@@ -268,3 +268,33 @@ A:
 1. 确保机器人走得慢一点（`cmd_vel` 的 vx 设小）
 2. 检查激光数据：`ros2 topic echo /scan`
 3. 调整 `mapper_params_online_async.yaml` 中的 `resolution`
+
+## MiniCPM-RobotTrack 视觉跟踪与导航系统
+
+根据 `20260828.md` 实施规划，系统新增 `puppy_minicpm_robot` 模块，将 OpenBMB MiniCPM-RobotTrack 视觉语言大模型与 Puppy 底盘及 Nav2 导航链路深度集成：
+
+### 1. 核心节点与职责
+- `vision_bridge_node`：统一仿真、USB/RealSense 相机与 Unitree Go2 VideoClient 的图像流输入，提供标准 `/camera/color/image_raw`（默认 384x384 裁剪与缩放）。
+- `minicpm_track_node`：负责模型推理客户端/引擎管理，接收自然语言任务指令，输出航向建议、3D Waypoint 及意图置信度。
+- `track_cmd_adapter_node`：速度映射、死区抑制、EMA滤波、失联 350ms 超时停车以及 `/scan` 激光雷达防撞安全覆盖（严格限制 `vx<=0.15m/s, wz<=0.30rad/s`）。
+- `mission_grounder_node`：将自然语言任务（如“巡视后院并检查是否有可疑物品”）解耦为结构化任务阶段（导航至区域 ➔ 视觉跟踪 ➔ 驻留检查 ➔ 自动返航）。
+
+### 2. 离线推断与阶段 A 验证
+```bash
+python src/puppy_minicpm_robot/scripts/offline_inference_demo.py --instruction "Follow the person ahead" --output logs/offline_inference_result.json
+```
+
+### 3. Go2 实机与硬件预检诊断
+```bash
+python src/puppy_minicpm_robot/scripts/preflight_check.py
+```
+
+### 4. 仿真与实机启动
+```bash
+# 仿真环境（支持 dry-run / sim 模式）
+ros2 launch puppy_minicpm_robot minicpm_robot_sim.launch.py mode:=dry-run
+
+# Go2 实机部署（默认 dry-run 安全模式）
+ros2 launch puppy_minicpm_robot minicpm_robot_go2.launch.py mode:=dry-run
+```
+
