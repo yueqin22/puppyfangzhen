@@ -1,0 +1,45 @@
+{
+  "algorithm": "A*+CBF",
+  "frames": 108000,
+  "sim_minutes": 60.0,
+  "collisions": 0,
+  "near_miss_events": 0,
+  "near_miss_frames": 0,
+  "skip_count": 88,
+  "stall_events": 44,
+  "rounds_completed": 6,
+  "elapsed_s": 230.89809799194336,
+  "segments": [
+    {
+      "segment": 1,
+      "frame": 36000,
+      "collisions": 0,
+      "near_miss_events": 0,
+      "near_miss_frames": 0,
+      "skip_count": 29,
+      "stall_events": 14,
+      "rounds": 2
+    },
+    {
+      "segment": 2,
+      "frame": 72000,
+      "collisions": 0,
+      "near_miss_events": 0,
+      "near_miss_frames": 0,
+      "skip_count": 58,
+      "stall_events": 27,
+      "rounds": 4
+    },
+    {
+      "segment": 3,
+      "frame": 108000,
+      "collisions": 0,
+      "near_miss_events": 0,
+      "near_miss_frames": 0,
+      "skip_count": 88,
+      "stall_events": 44,
+      "rounds": 6
+    }
+  ],
+  "level": "PASS (最低)"
+}

@@ -1,0 +1,154 @@
+[
+  {
+    "algo": "基线",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 3097,
+    "collisions_per_1000": 28.675925925925927,
+    "collisions_per_100m": 14.76294438986296,
+    "rounds": 442,
+    "distance_m": 20978.200000039073,
+    "avg_speed_mps": 5.827277777788631,
+    "near_miss": 41205,
+    "segment_collisions": [
+      1032,
+      1032,
+      1033
+    ],
+    "elapsed_s": 21.366679668426514,
+    "composite_score": 0.3947761183363581
+  },
+  {
+    "algo": "STVOC",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 2,
+    "collisions_per_1000": 0.018518518518518517,
+    "collisions_per_100m": 0.014497727795550301,
+    "rounds": 1,
+    "distance_m": 13795.265218138858,
+    "avg_speed_mps": 3.832018116149683,
+    "near_miss": 6435,
+    "segment_collisions": [
+      2,
+      0,
+      0
+    ],
+    "elapsed_s": 3584.0993645191193,
+    "composite_score": 0.06912392563722777
+  },
+  {
+    "algo": "ORCA",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 2286,
+    "collisions_per_1000": 21.166666666666668,
+    "collisions_per_100m": 12.155855398732495,
+    "rounds": 457,
+    "distance_m": 18805.75183740968,
+    "avg_speed_mps": 5.2238199548360225,
+    "near_miss": 34808,
+    "segment_collisions": [
+      761,
+      762,
+      763
+    ],
+    "elapsed_s": 50.292731285095215,
+    "composite_score": 0.3153454639348011
+  },
+  {
+    "algo": "APF",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 318,
+    "collisions_per_1000": 2.944444444444444,
+    "collisions_per_100m": 3.688745734099747,
+    "rounds": 160,
+    "distance_m": 8620.81647591818,
+    "avg_speed_mps": 2.3946712433106057,
+    "near_miss": 11829,
+    "segment_collisions": [
+      92,
+      109,
+      117
+    ],
+    "elapsed_s": 24.116857051849365,
+    "composite_score": 0.16395381044897997
+  },
+  {
+    "algo": "VO",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 3,
+    "collisions_per_1000": 0.02777777777777778,
+    "collisions_per_100m": 0.014259571781046544,
+    "rounds": 504,
+    "distance_m": 21038.499935794163,
+    "avg_speed_mps": 5.844027759942823,
+    "near_miss": 25215,
+    "segment_collisions": [
+      3,
+      0,
+      0
+    ],
+    "elapsed_s": 338.2100660800934,
+    "composite_score": 0.0003817537759139054
+  },
+  {
+    "algo": "RVO",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 498,
+    "collisions_per_1000": 4.611111111111111,
+    "collisions_per_100m": 2.4009186362912764,
+    "rounds": 492,
+    "distance_m": 20742.060662633103,
+    "avg_speed_mps": 5.761683517398084,
+    "near_miss": 27374,
+    "segment_collisions": [
+      169,
+      164,
+      165
+    ],
+    "elapsed_s": 204.73468899726868,
+    "composite_score": 0.06627372854108717
+  },
+  {
+    "algo": "SFM",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 1679,
+    "collisions_per_1000": 15.546296296296296,
+    "collisions_per_100m": 29.704308694354875,
+    "rounds": 107,
+    "distance_m": 5652.378640675398,
+    "avg_speed_mps": 1.5701051779653883,
+    "near_miss": 48842,
+    "segment_collisions": [
+      556,
+      562,
+      561
+    ],
+    "elapsed_s": 58.84961128234863,
+    "composite_score": 0.4142065046348866
+  },
+  {
+    "algo": "DWA",
+    "frames": 108000,
+    "sim_hours": 1.0,
+    "collisions": 3467,
+    "collisions_per_1000": 32.101851851851855,
+    "collisions_per_100m": 160.07058075861346,
+    "rounds": 0,
+    "distance_m": 2165.919548469833,
+    "avg_speed_mps": 0.601644319019398,
+    "near_miss": 107683,
+    "segment_collisions": [
+      1144,
+      1162,
+      1161
+    ],
+    "elapsed_s": 1672.0183691978455,
+    "composite_score": 0.9794099431510818
+  }
+]

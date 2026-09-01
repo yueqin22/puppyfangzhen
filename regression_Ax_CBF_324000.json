@@ -1,0 +1,105 @@
+{
+  "algorithm": "A*+CBF",
+  "frames": 324000,
+  "sim_minutes": 180.0,
+  "collisions": 0,
+  "near_miss_events": 877,
+  "near_miss_frames": 2095,
+  "skip_count": 242,
+  "stall_events": 0,
+  "rounds_completed": 128,
+  "elapsed_s": 895.4603109359741,
+  "segments": [
+    {
+      "segment": 1,
+      "frame": 36000,
+      "collisions": 0,
+      "near_miss_events": 108,
+      "near_miss_frames": 238,
+      "skip_count": 27,
+      "stall_events": 0,
+      "rounds": 12
+    },
+    {
+      "segment": 2,
+      "frame": 72000,
+      "collisions": 0,
+      "near_miss_events": 212,
+      "near_miss_frames": 481,
+      "skip_count": 55,
+      "stall_events": 0,
+      "rounds": 26
+    },
+    {
+      "segment": 3,
+      "frame": 108000,
+      "collisions": 0,
+      "near_miss_events": 308,
+      "near_miss_frames": 730,
+      "skip_count": 82,
+      "stall_events": 0,
+      "rounds": 41
+    },
+    {
+      "segment": 4,
+      "frame": 144000,
+      "collisions": 0,
+      "near_miss_events": 382,
+      "near_miss_frames": 907,
+      "skip_count": 106,
+      "stall_events": 0,
+      "rounds": 57
+    },
+    {
+      "segment": 5,
+      "frame": 180000,
+      "collisions": 0,
+      "near_miss_events": 503,
+      "near_miss_frames": 1196,
+      "skip_count": 136,
+      "stall_events": 0,
+      "rounds": 69
+    },
+    {
+      "segment": 6,
+      "frame": 216000,
+      "collisions": 0,
+      "near_miss_events": 601,
+      "near_miss_frames": 1426,
+      "skip_count": 163,
+      "stall_events": 0,
+      "rounds": 84
+    },
+    {
+      "segment": 7,
+      "frame": 252000,
+      "collisions": 0,
+      "near_miss_events": 673,
+      "near_miss_frames": 1604,
+      "skip_count": 188,
+      "stall_events": 0,
+      "rounds": 100
+    },
+    {
+      "segment": 8,
+      "frame": 288000,
+      "collisions": 0,
+      "near_miss_events": 787,
+      "near_miss_frames": 1895,
+      "skip_count": 215,
+      "stall_events": 0,
+      "rounds": 114
+    },
+    {
+      "segment": 9,
+      "frame": 324000,
+      "collisions": 0,
+      "near_miss_events": 877,
+      "near_miss_frames": 2095,
+      "skip_count": 242,
+      "stall_events": 0,
+      "rounds": 128
+    }
+  ],
+  "level": "PASS (最低)"
+}

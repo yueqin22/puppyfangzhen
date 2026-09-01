@@ -1,0 +1,52 @@
+[
+  {
+    "algo": "基线",
+    "frames": 6000,
+    "collisions": 0,
+    "collisions_per_1000": 0.0,
+    "rounds": 0,
+    "near_miss": 6,
+    "wall_hits": 0,
+    "elapsed": 1.4186527729034424
+  },
+  {
+    "algo": "STVOC",
+    "frames": 6000,
+    "collisions": 2,
+    "collisions_per_1000": 0.3333333333333333,
+    "rounds": 0,
+    "near_miss": 219,
+    "wall_hits": 0,
+    "elapsed": 4.911869287490845
+  },
+  {
+    "algo": "ORCA",
+    "frames": 6000,
+    "collisions": 0,
+    "collisions_per_1000": 0.0,
+    "rounds": 0,
+    "near_miss": 3,
+    "wall_hits": 0,
+    "elapsed": 2.8709874153137207
+  },
+  {
+    "algo": "APF",
+    "frames": 6000,
+    "collisions": 1,
+    "collisions_per_1000": 0.16666666666666666,
+    "rounds": 0,
+    "near_miss": 88,
+    "wall_hits": 0,
+    "elapsed": 1.6134998798370361
+  },
+  {
+    "algo": "VO",
+    "frames": 6000,
+    "collisions": 0,
+    "collisions_per_1000": 0.0,
+    "rounds": 0,
+    "near_miss": 56,
+    "wall_hits": 0,
+    "elapsed": 19.677541732788086
+  }
+]

@@ -1,0 +1,97 @@
+{
+  "timestamp": 1786486733.2122734,
+  "results": {
+    "基线": {
+      "algorithm": "基线",
+      "rounds_completed": 0,
+      "total_collisions": 0,
+      "near_miss": 0,
+      "skip_count": 0,
+      "stall_events": 1,
+      "robot_position": [
+        1.094,
+        2.834
+      ],
+      "target_idx": 10
+    },
+    "STVOC": {
+      "algorithm": "STVOC",
+      "rounds_completed": 0,
+      "total_collisions": 0,
+      "near_miss": 1,
+      "skip_count": 0,
+      "stall_events": 0,
+      "robot_position": [
+        -0.406,
+        2.908
+      ],
+      "target_idx": 10
+    },
+    "VO": {
+      "algorithm": "VO",
+      "rounds_completed": 0,
+      "total_collisions": 0,
+      "near_miss": 0,
+      "skip_count": 0,
+      "stall_events": 0,
+      "robot_position": [
+        1.085,
+        2.898
+      ],
+      "target_idx": 10
+    },
+    "RVO": {
+      "algorithm": "RVO",
+      "rounds_completed": 0,
+      "total_collisions": 0,
+      "near_miss": 0,
+      "skip_count": 0,
+      "stall_events": 0,
+      "robot_position": [
+        1.058,
+        2.936
+      ],
+      "target_idx": 10
+    },
+    "CBF": {
+      "algorithm": "CBF",
+      "rounds_completed": 0,
+      "total_collisions": 0,
+      "near_miss": 0,
+      "skip_count": 0,
+      "stall_events": 0,
+      "robot_position": [
+        1.083,
+        2.91
+      ],
+      "target_idx": 10
+    },
+    "A*+CBF": {
+      "algorithm": "A*+CBF",
+      "rounds_completed": 1,
+      "total_collisions": 0,
+      "near_miss": 1,
+      "skip_count": 0,
+      "stall_events": 0,
+      "robot_position": [
+        -1.423,
+        -1.151
+      ],
+      "target_idx": 2
+    }
+  },
+  "screenshots": [
+    "E:\\puppyfangzhen\\sim_snap_algo_0_基线_f300.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_0_基线_f599.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_1_STVOC_f300.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_1_STVOC_f599.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_4_VO_f300.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_4_VO_f599.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_5_RVO_f300.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_5_RVO_f599.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_8_CBF_f300.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_8_CBF_f599.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_9_A_star_+CBF_f300.png",
+    "E:\\puppyfangzhen\\sim_snap_algo_9_A_star_+CBF_f599.png"
+  ]
+}

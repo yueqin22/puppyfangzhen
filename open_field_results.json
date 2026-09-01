@@ -1,0 +1,57 @@
+[
+  {
+    "algo": "基线",
+    "frames": 8000,
+    "collisions": 229,
+    "collisions_per_1000": 28.625,
+    "rounds": 32,
+    "distance": 1552.0000000002158,
+    "avg_speed_mps": 5.820000000000809,
+    "near_miss": 3092,
+    "elapsed": 1.553246021270752
+  },
+  {
+    "algo": "STVOC",
+    "frames": 8000,
+    "collisions": 2,
+    "collisions_per_1000": 0.25,
+    "rounds": 1,
+    "distance": 1041.0852054012105,
+    "avg_speed_mps": 3.9040695202545397,
+    "near_miss": 472,
+    "elapsed": 23.830511331558228
+  },
+  {
+    "algo": "ORCA",
+    "frames": 8000,
+    "collisions": 167,
+    "collisions_per_1000": 20.875,
+    "rounds": 33,
+    "distance": 1375.026375778402,
+    "avg_speed_mps": 5.156348909169008,
+    "near_miss": 2596,
+    "elapsed": 3.7084927558898926
+  },
+  {
+    "algo": "APF",
+    "frames": 8000,
+    "collisions": 22,
+    "collisions_per_1000": 2.75,
+    "rounds": 11,
+    "distance": 641.1651410731687,
+    "avg_speed_mps": 2.4043692790243827,
+    "near_miss": 829,
+    "elapsed": 1.8064751625061035
+  },
+  {
+    "algo": "VO",
+    "frames": 8000,
+    "collisions": 3,
+    "collisions_per_1000": 0.375,
+    "rounds": 37,
+    "distance": 1557.6710831975558,
+    "avg_speed_mps": 5.841266561990834,
+    "near_miss": 1857,
+    "elapsed": 24.55219054222107
+  }
+]

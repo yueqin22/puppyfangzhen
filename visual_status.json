@@ -1,0 +1,17 @@
+{
+  "frame": 300,
+  "algorithm": "VO",
+  "target_idx": 1,
+  "target": "living_room",
+  "rounds_completed": 0,
+  "action": "avoid",
+  "robot_x": -0.24397725447975968,
+  "robot_y": -1.4608065169156306,
+  "collisions": 0,
+  "near_miss_events": 0,
+  "near_miss_frames": 0,
+  "skip_count": 0,
+  "stall_events": 1,
+  "paused": false,
+  "timestamp": 1786993451.9873102
+}

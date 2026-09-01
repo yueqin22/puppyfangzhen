@@ -1,0 +1,217 @@
+{
+  "timestamp": 1786548966.085976,
+  "algorithm": "A*+CBF",
+  "elapsed_seconds": 8.4,
+  "frames_simulated": 737,
+  "rounds_completed": 1,
+  "total_targets_reached": 20,
+  "total_targets": 20,
+  "total_collisions": 0,
+  "stall_events": 0,
+  "min_clearance_meters": 0.0019,
+  "closest_obstacle": "coffee_table",
+  "skip_count": 0,
+  "near_miss": 0,
+  "snapshots": [
+    {
+      "step": 1,
+      "target": "living_room_w",
+      "room": "",
+      "position": [
+        0.44,
+        -4.971
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_01_living_room_w.png"
+    },
+    {
+      "step": 2,
+      "target": "living_room_c",
+      "room": "",
+      "position": [
+        -5.096,
+        -2.061
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_02_living_room_c.png"
+    },
+    {
+      "step": 3,
+      "target": "living_room_e",
+      "room": "",
+      "position": [
+        -2.245,
+        -1.884
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_03_living_room_e.png"
+    },
+    {
+      "step": 4,
+      "target": "hallway",
+      "room": "",
+      "position": [
+        -0.245,
+        -2.684
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_04_hallway.png"
+    },
+    {
+      "step": 5,
+      "target": "door_mb_out",
+      "room": "",
+      "position": [
+        -0.952,
+        0.539
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_05_door_mb_out.png"
+    },
+    {
+      "step": 6,
+      "target": "door_mb_in",
+      "room": "",
+      "position": [
+        -3.405,
+        1.71
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_06_door_mb_in.png"
+    },
+    {
+      "step": 7,
+      "target": "master_bed",
+      "room": "",
+      "position": [
+        -3.569,
+        2.392
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_07_master_bed.png"
+    },
+    {
+      "step": 8,
+      "target": "door_mb_out",
+      "room": "",
+      "position": [
+        -5.578,
+        3.111
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_08_door_mb_out.png"
+    },
+    {
+      "step": 9,
+      "target": "door_study_out",
+      "room": "",
+      "position": [
+        -3.904,
+        1.932
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_09_door_study_out.png"
+    },
+    {
+      "step": 10,
+      "target": "door_study_in",
+      "room": "",
+      "position": [
+        -0.352,
+        1.632
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_10_door_study_in.png"
+    },
+    {
+      "step": 11,
+      "target": "study",
+      "room": "",
+      "position": [
+        -0.098,
+        2.43
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_11_study.png"
+    },
+    {
+      "step": 12,
+      "target": "door_study_out",
+      "room": "",
+      "position": [
+        -1.124,
+        3.221
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_12_door_study_out.png"
+    },
+    {
+      "step": 13,
+      "target": "door_bath_out",
+      "room": "",
+      "position": [
+        -0.088,
+        2.092
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_13_door_bath_out.png"
+    },
+    {
+      "step": 14,
+      "target": "door_bath_in",
+      "room": "",
+      "position": [
+        1.915,
+        1.85
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_14_door_bath_in.png"
+    },
+    {
+      "step": 15,
+      "target": "bathroom",
+      "room": "",
+      "position": [
+        2.265,
+        2.561
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_15_bathroom.png"
+    },
+    {
+      "step": 16,
+      "target": "door_bath_out",
+      "room": "",
+      "position": [
+        2.253,
+        3.628
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_16_door_bath_out.png"
+    },
+    {
+      "step": 17,
+      "target": "kitchen",
+      "room": "",
+      "position": [
+        2.305,
+        2.056
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_17_kitchen.png"
+    },
+    {
+      "step": 18,
+      "target": "dining",
+      "room": "",
+      "position": [
+        5.678,
+        -0.351
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_18_dining.png"
+    },
+    {
+      "step": 19,
+      "target": "return_south",
+      "room": "",
+      "position": [
+        4.292,
+        -0.923
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_19_return_south.png"
+    },
+    {
+      "step": 20,
+      "target": "dock",
+      "room": "",
+      "position": [
+        3.583,
+        -3.648
+      ],
+      "image_path": "E:\\puppyfangzhen\\patrol_step_20_dock.png"
+    }
+  ]
+}
