@@ -17,12 +17,23 @@
 # "does not appear to be published yet" and will make you chase a bug that isn't there.
 #
 # Usage:
-#   ./verify_standby_live.sh            # standby check only
-#   ./verify_standby_live.sh --mission  # also dispatch a mission and watch phases
+#   ./verify_standby_live.sh                     # standby check only
+#   ./verify_standby_live.sh --mission           # also dispatch a mission and watch phases
+#   ./verify_standby_live.sh --mission --restart-world
+#                                                # restart Gazebo+SLAM first (see below)
+#
+# --restart-world exists because the sim is a long-lived process, not a fixture.
+# Observed: a gzserver left running ~42 h had the base sunk below the floor
+# (odom z = -0.155 m) with ~200 deg of the LiDAR arc reading 0.10-0.20 m (floor
+# returns). Every navigation then aborted as "blocked by obstacle" no matter what
+# the navigation code did -- a phantom failure. Restart the world for a run you
+# intend to trust, or use `check_env` to at least detect the rot.
 #
 # Environment overrides:
-#   SRC  host source package dir (default /mnt/e/puppyfangzhen/src/puppy_minicpm_robot)
-#   WS   colcon workspace         (default $HOME/puppy_ws)
+#   SRC    host source package dir (default /mnt/e/puppyfangzhen/src/puppy_minicpm_robot)
+#   WS     colcon workspace         (default $HOME/puppy_ws)
+#   WORLD  Gazebo world name for --restart-world (default small_room)
+#   MISSION_TEXT / MISSION_TIMEOUT  mission dispatch overrides
 #
 # NOTE: deliberately NOT using `set -u`. ROS 2 (/opt/ros/*/setup.bash dereferences
 # AMENT_TRACE_SETUP_FILES) and colcon ($WS/install/setup.bash dereferences COLCON_TRACE)
@@ -37,9 +48,17 @@ WS="${WS:-$HOME/puppy_ws}"
 PKG="$WS/src/puppy_minicpm_robot"
 LOG="$WS/verify_standby.log"
 CMDLOG="$WS/verify_standby_cmdvel.txt"
+CMDYLOG="$WS/verify_standby_cmdvel_y.txt"
 INTENTLOG="$WS/verify_standby_intent.txt"
 WITH_MISSION=0
-[[ "${1:-}" == "--mission" ]] && WITH_MISSION=1
+RESTART_WORLD=0
+for arg in "$@"; do
+  case "$arg" in
+    --mission) WITH_MISSION=1 ;;
+    --restart-world) RESTART_WORLD=1 ;;
+  esac
+done
+WORLD="${WORLD:-small_room}"
 
 NODES=(vision_bridge_node minicpm_track_node track_cmd_adapter_node mission_grounder_node)
 
@@ -49,10 +68,13 @@ NODES=(vision_bridge_node minicpm_track_node track_cmd_adapter_node mission_grou
 # publisher hangs the whole verification instead of reporting it.
 echo_once() {
   local topic="$1" field="${2:-}" secs="${3:-8}"
+  # stderr is merged on purpose: discarding it hides the only clue when a probe
+  # times out (e.g. "topic does not appear to be published yet"), and consumers
+  # here only match lines starting with `data: ` / a number, so it is harmless.
   if [[ -n "$field" ]]; then
-    timeout "$secs" ros2 topic echo "$topic" --field "$field" --once 2>/dev/null
+    timeout "$secs" ros2 topic echo "$topic" --field "$field" --once 2>&1
   else
-    timeout "$secs" ros2 topic echo "$topic" --once 2>/dev/null
+    timeout "$secs" ros2 topic echo "$topic" --once 2>&1
   fi
 }
 
@@ -88,6 +110,106 @@ kill_nodes() {
   done
 }
 
+# wait_for_topic <topic> <timeout_secs> -- poll until the topic has a publisher.
+wait_for_topic() {
+  local topic="$1" deadline=$(( $(date +%s) + ${2:-60} )) n
+  while (( $(date +%s) < deadline )); do
+    n="$(ros2 topic info "$topic" 2>/dev/null \
+         | sed -n 's/.*Publisher count: \([0-9]*\).*/\1/p')"
+    if [[ "${n:-0}" =~ ^[0-9]+$ ]] && (( n >= 1 )); then
+      echo "$topic: publisher up"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "WARNING: $topic has no publisher after ${2:-60}s"
+  return 1
+}
+
+# topic_subs <topic> -- print the subscription count (0 when unavailable).
+topic_subs() {
+  ros2 topic info "$1" 2>/dev/null \
+    | sed -n 's/.*Subscription count: \([0-9]*\).*/\1/p' | head -1
+}
+
+# restart_world -- bring Gazebo + SLAM back up from scratch.
+# This kills gzserver/slam_toolbox, so it is opt-in (--restart-world).
+restart_world() {
+  echo "=== restart sim world ($WORLD) ==="
+  pkill -9 -f "[g]zserver" 2>/dev/null
+  pkill -9 -f "[g]zclient" 2>/dev/null
+  pkill -9 -f "[a]sync_slam_toolbox_node" 2>/dev/null
+  pkill -9 -f "[r]obot_state_publisher" 2>/dev/null
+  pkill -9 -f "[g]ait_controller" 2>/dev/null
+  sleep 4
+  setsid --fork ros2 launch puppy_worlds simulation.launch.py \
+    world:="$WORLD" gui:=false use_sim_time:=true > "$WS/world.log" 2>&1
+  setsid --fork ros2 launch puppy_slam slam_toolbox.launch.py > "$WS/slam.log" 2>&1
+  wait_for_topic /scan 90
+  wait_for_topic /odom 90
+  # Gravity/physics need a moment to settle the base onto the floor; judging the
+  # pose before that reads the spawn transient, not the steady state.
+  echo "settling 15s after world start"
+  sleep 15
+}
+
+# check_env -- is the robot physically able to navigate at all?
+# Prints a verdict on stdout. Sets ENV_OK=1 when the base is on the floor with
+# usable free space. Without this, a world that has rotted (base sunk into the
+# floor) reports "blocked by obstacle" and the failure gets blamed on navigation.
+check_env() {
+  local odomf="$WS/verify_env_odom.txt" scanf="$WS/verify_env_scan.txt"
+  : > "$odomf"; : > "$scanf"
+  echo_once /odom "" 10 > "$odomf"
+  echo_once /scan ranges 10 > "$scanf"
+  ENV_OK=0
+  python3 - "$odomf" "$scanf" <<'PY'
+import ast, re, sys
+odom_txt = open(sys.argv[1], errors="replace").read()
+scan_txt = open(sys.argv[2], errors="replace").read()
+
+z = None
+m = re.search(r"z:\s*(-?[0-9.]+)", odom_txt)
+if m:
+    z = float(m.group(1))
+
+ranges = []
+m = re.search(r"array\('f',\s*\[(.*?)\]\)", scan_txt, re.S)
+if m:
+    try:
+        ranges = [float(v) for v in m.group(1).split(",") if v.strip()]
+    except Exception:
+        ranges = []
+
+near = sum(1 for r in ranges if r < 0.35)
+frac = (near / len(ranges)) if ranges else 1.0
+
+print("  odom z            : %s" % ("?" if z is None else "%.3f" % z))
+print("  scan rays         : %d" % len(ranges))
+print("  rays closer than 0.35 m: %.0f%%" % (frac * 100))
+
+# Do NOT treat a slightly negative z as "sunk into the floor": base_footprint on
+# this URDF sits ABOUT -0.155 m at rest (measured after a clean world restart,
+# with 0% of LiDAR rays closer than 0.35 m and 1.43 m of clearance ahead). Only a
+# deep drop means the physics has actually collapsed.
+ok = True
+if z is not None and z < -0.5:
+    print("  UNHEALTHY: base has dropped far below its rest height (z = %.3f)" % z)
+    ok = False
+if not ranges:
+    print("  UNHEALTHY: no LiDAR data")
+    ok = False
+elif frac > 0.40:
+    print("  UNHEALTHY: %.0f%% of rays read < 0.35 m -- the base is hemmed in or grounded"
+          % (frac * 100))
+    ok = False
+if ok:
+    print("  env health: OK")
+sys.exit(0 if ok else 1)
+PY
+  [[ $? -eq 0 ]] && ENV_OK=1
+}
+
 : > "$LOG"
 exec > "$LOG" 2>&1
 set +e
@@ -117,6 +239,12 @@ echo "=== kill stale nodes ==="
 kill_nodes
 sleep 3
 
+# Restart the world BEFORE our nodes launch, so they come up against fresh
+# Gazebo/SLAM rather than binding to a sim that is about to be killed.
+if [ "$RESTART_WORLD" -eq 1 ]; then
+  restart_world
+fi
+
 echo "=== launch 4-node sim (mode=sim) ==="
 setsid --fork ros2 launch puppy_minicpm_robot minicpm_robot_sim.launch.py \
   mode:=sim backend:=mock camera_source:=synthetic > "$WS/launch.log" 2>&1
@@ -132,12 +260,14 @@ ros2 topic info /cmd_vel 2>&1 | grep -E 'Type|count'
 # Sample safety status, the tracker's phantom intent, and /cmd_vel together, so that
 # "standby" can only pass while an active target is actually asking the base to move.
 : > "$CMDLOG"
+: > "$CMDYLOG"
 : > "$INTENTLOG"
 echo "=== STANDBY WINDOW (no mission dispatched yet) ==="
 for i in $(seq 1 8); do
   echo_once /minicpm_robot/safety_status data 8
   echo_once /minicpm_robot/track_intent "" 5 >> "$INTENTLOG"
   echo_once /cmd_vel linear.x 8 >> "$CMDLOG"
+  echo_once /cmd_vel linear.y 8 >> "$CMDYLOG"
   sleep 1
 done
 
@@ -145,16 +275,20 @@ STANDBY_HITS=$(grep -c '"standby": true' "$LOG" || true)
 PHANTOM_HITS=$(grep -c '"target_detected": true' "$INTENTLOG" || true)
 CMD_SAMPLES=$(grep -cE '^-?[0-9]' "$CMDLOG" || true)
 CMD_NONZERO=$(awk '($1+0 != 0){c++} END{print c+0}' "$CMDLOG")
+CMDY_SAMPLES=$(grep -cE '^-?[0-9]' "$CMDYLOG" || true)
+CMDY_NONZERO=$(awk '($1+0 != 0){c++} END{print c+0}' "$CMDYLOG")
 
 echo "standby_true_samples=$STANDBY_HITS"
 echo "phantom_intent_samples=$PHANTOM_HITS"
 echo "cmdvel_samples=$CMD_SAMPLES nonzero_cmdvel_samples=$CMD_NONZERO"
+echo "cmdvel_linear_y_samples=$CMDY_SAMPLES nonzero_cmdvel_linear_y=$CMDY_NONZERO"
 
 if [ "$PHANTOM_HITS" -eq 0 ]; then
   echo "VERDICT: INCONCLUSIVE -- no phantom intent seen on /minicpm_robot/track_intent."
   echo "         Standby proves nothing while nothing asks the base to move; this is a"
   echo "         broken setup (tracker not publishing), not a passing fix."
-elif [ "$STANDBY_HITS" -ge 1 ] && [ "$CMD_SAMPLES" -ge 1 ] && [ "$CMD_NONZERO" -eq 0 ]; then
+elif [ "$STANDBY_HITS" -ge 1 ] && [ "$CMD_SAMPLES" -ge 1 ] && [ "$CMD_NONZERO" -eq 0 ] \
+     && [ "$CMDY_NONZERO" -eq 0 ]; then
   echo "VERDICT: PASS -- base held still under an active phantom target (no wall drive)"
 else
   echo "VERDICT: CHECK -- standby=$STANDBY_HITS phantom=$PHANTOM_HITS" \
@@ -162,19 +296,217 @@ else
 fi
 
 if [ "$WITH_MISSION" -eq 1 ]; then
-  echo "=== dispatch mission: patrol living room ==="
-  timeout 10 ros2 topic pub --once /mission/command std_msgs/String \
-    "{data: 'Go to the living room and follow the person there, then return home'}"
-  echo "=== watch phases for 60s ==="
-  for i in $(seq 1 60); do
-    echo_once /minicpm_robot/mission_status data 5 | python3 -c "
-import sys, json
-try:
-    print(json.loads(sys.stdin.read()).get('phase'))
-except Exception:
-    pass" 2>/dev/null
+  # The zone keys are UNDERSCORED ("living_room", "backyard"): parse_instruction
+  # matches `zone_key in raw_text`, so "living room" with a space silently falls
+  # back to default_zone (backyard) and the run quietly verifies a different
+  # waypoint than the one you think you asked for.
+  MISSION_TEXT="${MISSION_TEXT:-Go to living_room and follow the person for 5s, then return home}"
+  MSLOG="$WS/verify_mission_status.txt"
+  MCMDLOG="$WS/verify_mission_cmdvel.txt"
+  MCMDYLOG="$WS/verify_mission_cmdvel_y.txt"
+  SAFELOG="$WS/verify_mission_safety.txt"
+  : > "$MSLOG"
+  : > "$MCMDLOG"
+  : > "$MCMDYLOG"
+  : > "$SAFELOG"
+
+  echo "=== environment health (before dispatch) ==="
+  check_env
+
+  echo "=== dispatch mission ==="
+  echo "instruction: $MISSION_TEXT"
+  # Two failure modes to avoid here. (a) `pub --once` firing before discovery:
+  # the message goes nowhere and the run looks like a timeout. (b) Publishing
+  # repeatedly "just in case": the grounder treats EVERY message as a new mission
+  # and resets the phase timer, so `--times 5` created five missions back to back
+  # and only the last one ever ran. Wait for the subscriber, then publish once.
+  for i in $(seq 1 30); do
+    if [[ "$(topic_subs /mission/command)" =~ ^[0-9]+$ ]] \
+       && (( $(topic_subs /mission/command) >= 1 )); then
+      break
+    fi
     sleep 1
   done
+  echo "mission/command subscribers: $(topic_subs /mission/command)"
+  timeout 15 ros2 topic pub --once /mission/command std_msgs/String \
+    "{data: '$MISSION_TEXT'}" 2>&1 | tail -2
+  sleep 3
+
+  # Warm up discovery first. The grounder publishes NOTHING until a mission is
+  # loaded, so this must run after the dispatch. Under WSL the first
+  # publisher<->subscriber match for a fresh topic repeatedly needed far more
+  # than the 5 s originally used: every probe timed out, all 42 loop iterations
+  # burned their budget waiting, and the run ended INCONCLUSIVE even though the
+  # mission had in fact started (cmd_vel went non-zero twice).
+  echo "waiting for first mission_status (discovery warm-up, up to 45s)"
+  echo_once /minicpm_robot/mission_status data 45 >> "$MSLOG"
+  head -c 400 "$MSLOG"
+
+  # Wall-clock bounded, not iteration bounded: the whole cycle is
+  # navigate(<=35s) + dwell(5s) + inspect + return(<=35s), so a fixed 60-iteration
+  # loop truncates the mission mid-flight and reports a bogus "stuck in phase X".
+  MISSION_TIMEOUT="${MISSION_TIMEOUT:-240}"
+  echo "=== watch mission (timeout ${MISSION_TIMEOUT}s) ==="
+  deadline=$(( $(date +%s) + MISSION_TIMEOUT ))
+  final=""
+  while (( $(date +%s) < deadline )); do
+    echo_once /minicpm_robot/mission_status data 15 >> "$MSLOG"
+    echo_once /cmd_vel linear.x 10 >> "$MCMDLOG"
+    # lateral command: non-zero here is the signal that the strafe path ran
+    echo_once /cmd_vel linear.y 10 >> "$MCMDYLOG"
+    # Safety is sampled alongside so a FAILED mission can be attributed: a lidar
+    # block at ~0.1 m means the base is grounded (sim rot), a block at just under
+    # the 0.35 m threshold with no progress means a real obstruction, and
+    # phase_gated/navigating tells you who was supposed to be driving at all.
+    echo_once /minicpm_robot/safety_status data 10 >> "$SAFELOG"
+    final="$(python3 - "$MSLOG" <<'PY'
+import json, sys
+# `ros2 topic echo --field data --once` prints the RAW VALUE, not `data: <value>`:
+# a String payload comes out as a bare JSON object. Filtering on a "data: " prefix
+# therefore discards every sample, the loop never sees a terminal phase and burns
+# its whole timeout. Strip the prefix if present, then require a JSON object.
+last = ""
+try:
+    with open(sys.argv[1], errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith("data: "):
+                line = line[6:]
+            if not line.startswith("{"):
+                continue
+            try:
+                last = json.loads(line).get("phase", "")
+            except Exception:
+                pass
+except Exception:
+    pass
+print(last)
+PY
+)"
+    case "$final" in
+      COMPLETED|FAILED|ABORTED) break ;;
+    esac
+    sleep 1
+  done
+
+  echo "=== mission phase trace ==="
+  python3 - "$MSLOG" <<'PY'
+import json, sys
+seq, last = [], None
+first_pose = last_pose = None
+frame = "?"
+msg = ""
+try:
+    with open(sys.argv[1], errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith("data: "):
+                line = line[6:]
+            if not line.startswith("{"):
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            ph = d.get("phase")
+            if ph and ph != last:
+                seq.append(ph)
+                last = ph
+            if first_pose is None:
+                first_pose = d.get("robot_pose")
+            last_pose = d.get("robot_pose")
+            frame = d.get("pose_frame", frame)
+            msg = d.get("message", "")
+except Exception as exc:
+    print("  (could not parse mission status: %s)" % exc)
+    sys.exit(0)
+
+print("  phase order : %s" % (" -> ".join(seq) if seq else "(none)"))
+print("  final phase : %s" % last)
+if msg:
+    print("  message     : %s" % msg)
+print("  pose frame  : %s" % frame)
+print("  start pose  : %s" % first_pose)
+print("  end pose    : %s" % last_pose)
+if first_pose and last_pose:
+    dist = ((last_pose[0] - first_pose[0]) ** 2 + (last_pose[1] - first_pose[1]) ** 2) ** 0.5
+    print("  net displacement: %.3f m" % dist)
+PY
+
+  MCMD_SAMPLES=$(grep -cE '^-?[0-9]' "$MCMDLOG" || true)
+  MCMD_NONZERO=$(awk '($1+0 != 0){c++} END{print c+0}' "$MCMDLOG")
+  MCMDY_SAMPLES=$(grep -cE '^-?[0-9]' "$MCMDYLOG" || true)
+  MCMDY_NONZERO=$(awk '($1+0 != 0){c++} END{print c+0}' "$MCMDYLOG")
+  MCMDY_PEAK=$(awk '{v=$1+0; if (v<0) v=-v; if (v>m) m=v} END{printf "%.3f", m+0}' "$MCMDYLOG")
+  echo "mission_cmdvel_samples=$MCMD_SAMPLES nonzero=$MCMD_NONZERO"
+  echo "mission_cmdvel_linear_y_samples=$MCMDY_SAMPLES nonzero=$MCMDY_NONZERO peak=${MCMDY_PEAK}"
+
+  echo "=== safety during mission ==="
+  python3 - "$SAFELOG" <<'PY'
+import json, sys
+from collections import Counter
+reasons, dists, gated, nav, esc = Counter(), [], 0, 0, 0
+try:
+    with open(sys.argv[1], errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith("data: "):
+                line = line[6:]
+            if not line.startswith("{"):
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            reasons[d.get("active_override_reason", "?")] += 1
+            dists.append(float(d.get("obstacle_distance", 0.0)))
+            gated += 1 if d.get("phase_gated") else 0
+            nav += 1 if d.get("navigating") else 0
+            esc += 1 if d.get("blocked_escalated") else 0
+except Exception as exc:
+    print("  (no safety samples: %s)" % exc)
+    sys.exit(0)
+if not reasons:
+    print("  (no safety samples collected)")
+    sys.exit(0)
+print("  samples: %d" % sum(reasons.values()))
+for r, c in reasons.most_common():
+    print("    %-55s x%d" % (r, c))
+dists.sort()
+if dists:
+    print("  obstacle_distance min=%.3f median=%.3f max=%.3f"
+          % (dists[0], dists[len(dists) // 2], dists[-1]))
+print("  phase_gated=%d navigating=%d blocked_escalated=%d" % (gated, nav, esc))
+PY
+
+  if [ "${ENV_OK:-0}" -ne 1 ]; then
+    echo "NOTE: the world was flagged UNHEALTHY before dispatch. A navigation"
+    echo "      failure here is far more likely the sim than the navigation code;"
+    echo "      re-run with --restart-world before believing it."
+  fi
+
+  # A mission that "completes" without the base ever moving is as meaningless as
+  # a standby check with no phantom target: the timers would have fired while the
+  # robot stood still, so require evidence of motion before believing COMPLETED.
+  case "$final" in
+    COMPLETED)
+      if [ "$MCMD_NONZERO" -eq 0 ]; then
+        echo "MISSION VERDICT: FAIL -- reached COMPLETED but /cmd_vel was never non-zero."
+        echo "                 The phases advanced on timers alone; the base never drove."
+      else
+        echo "MISSION VERDICT: PASS -- reached COMPLETED with $MCMD_NONZERO moving samples"
+      fi
+      ;;
+    FAILED|ABORTED)
+      echo "MISSION VERDICT: FAIL -- mission ended in $final"
+      ;;
+    "")
+      echo "MISSION VERDICT: INCONCLUSIVE -- no mission_status received; did /mission/command land?"
+      ;;
+    *)
+      echo "MISSION VERDICT: CHECK -- still in phase $final after ${MISSION_TIMEOUT}s"
+      ;;
+  esac
 fi
 
 echo "=== DONE ==="
