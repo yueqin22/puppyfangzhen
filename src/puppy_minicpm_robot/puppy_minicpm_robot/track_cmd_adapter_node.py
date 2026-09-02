@@ -35,9 +35,17 @@ class TrackCmdAdapterNode(Node):
         else:
             self._init_mock_state()
 
+        # Initialised here rather than inside the rclpy branch: _travel_clearance
+        # reads it on every tick, including ticks before the first LaserScan
+        # arrives. Leaving it undefined on the real-node path fails with
+        # AttributeError at runtime while the mock path (used by the unit tests)
+        # happens to define it -- the classic "all green, dead on hardware" trap.
+        self.latest_scan = None
+
         self.last_intent: Optional[TrackIntent] = None
         self.last_intent_time = 0.0
         self.current_smoothed_vx = 0.0
+        self.current_smoothed_vy = 0.0
         self.current_smoothed_wz = 0.0
         # Closest obstacle in the arc the robot drives into.
         # `latest_min_obstacle_dist` is the FORWARD arc (used when vx > 0);
@@ -95,6 +103,12 @@ class TrackCmdAdapterNode(Node):
         self.declare_parameter("nav_lin_gain", 0.5)        # vx = clamp(dist * gain, max_vx)
         self.declare_parameter("nav_arrival_m", 0.20)      # stop this far from the goal
         self.declare_parameter("nav_timeout_grace_s", 3.0) # hold if pose/goal unknown this long
+        # Cap for the lateral (body +y) component. Measured on the live sim: the
+        # gait ignores angular.z almost completely (a command worth 103 deg of yaw
+        # turned the base 1.3 deg) but it DOES execute linear.y (0.379 m travelled
+        # for a 0.400 m command, 95%). So a goal lying off the nose is reachable by
+        # strafing rather than by waiting for a turn that will never happen.
+        self.declare_parameter("max_vy", 0.15)
 
         self.mode = self.get_parameter("mode").get_parameter_value().string_value
         self.vx_positive_scale = self.get_parameter("vx_positive_scale").get_parameter_value().double_value
@@ -126,6 +140,7 @@ class TrackCmdAdapterNode(Node):
         self.nav_lin_gain = self.get_parameter("nav_lin_gain").get_parameter_value().double_value
         self.nav_arrival_m = self.get_parameter("nav_arrival_m").get_parameter_value().double_value
         self.nav_timeout_grace_s = self.get_parameter("nav_timeout_grace_s").get_parameter_value().double_value
+        self.max_vy = self.get_parameter("max_vy").get_parameter_value().double_value
 
     def _init_mock_state(self):
         self.mode = "dry-run"
@@ -150,6 +165,7 @@ class TrackCmdAdapterNode(Node):
         self.blocked_escalation_sec = 5.0
         self.blocked_log_period_sec = 5.0
         self.gate_by_mission_phase = True
+        self.max_vy = 0.15
         self.tracking_phases = ["VISUAL_TRACKING"]
         self.nav_yaw_gain = 2.0
         self.nav_align_rad = 0.35
@@ -283,6 +299,12 @@ class TrackCmdAdapterNode(Node):
         roughly 7 cm at the 0.35 m stop distance.
         """
         try:
+            # Keep the scan so the obstacle arc can be aimed at the direction the
+            # base is ACTUALLY travelling (see _travel_clearance). The precomputed
+            # fore/aft values are only meaningful for pure fore/aft motion; when
+            # strafing, judging a sideways move against the nose arc reports the
+            # wrong clearance entirely.
+            self.latest_scan = msg
             self.latest_min_obstacle_dist = self._arc_obstacle_distance(msg, 0.0)
             self.latest_rear_obstacle_dist = self._arc_obstacle_distance(msg, math.pi)
         except Exception:
@@ -317,6 +339,22 @@ class TrackCmdAdapterNode(Node):
         idx = int(math.floor(len(window) * self.obstacle_percentile / 100.0))
         return window[min(idx, len(window) - 1)]
 
+    def _travel_clearance(self, vx: float, vy: float) -> float:
+        """Clearance in the direction the base is actually translating (body frame).
+
+        Fore/aft motion keeps using the arcs precomputed in scan_callback, which
+        is both cheaper and what the existing tests pin. Any command with a
+        lateral component is judged against an arc centred on the commanded
+        diagonal instead -- otherwise a strafe is vetoed by whatever sits in front
+        of the nose, even when the path it is actually taking is wide open.
+        """
+        fore_aft = self.latest_rear_obstacle_dist if vx < 0.0 else self.latest_min_obstacle_dist
+        if abs(vy) <= 1e-3 or self.latest_scan is None:
+            return fore_aft
+        if abs(vx) <= 1e-6 and abs(vy) <= 1e-6:
+            return fore_aft
+        return self._arc_obstacle_distance(self.latest_scan, math.atan2(vy, vx))
+
     def compute_velocity(self, intent: Optional[TrackIntent], current_time: float) -> Tuple[float, float, SafetyStatus]:
         """Compute bounded, smoothed, and safety-verified linear/angular velocities."""
         status = SafetyStatus(
@@ -327,6 +365,11 @@ class TrackCmdAdapterNode(Node):
             confidence_decay=False,
             active_override_reason="NONE"
         )
+
+        # Lateral command. Stays 0 unless the navigation branch sets it: the
+        # tracker's intent carries no lateral component, so tracker-driven motion
+        # remains pure fore/aft + yaw exactly as before.
+        target_vy = 0.0
 
         # 0. Mission phase gate. Tracking is only the authority in tracking_phases.
         # Everywhere else the tracker must not drive the base. Three sub-cases:
@@ -339,7 +382,7 @@ class TrackCmdAdapterNode(Node):
         # hold is never mistaken for a LiDAR block.
         if self._is_phase_gated():
             if self._nav_target_available():
-                target_vx, target_wz, status = self._nav_target_velocity(status, current_time)
+                target_vx, target_vy, target_wz, status = self._nav_target_velocity(status, current_time)
             elif self.mission_phase is None:
                 # No mission has been dispatched: stand by idle. Do NOT auto-follow
                 # a phantom target (the mock backend reports dx=+0.6 forever), or
@@ -410,18 +453,18 @@ class TrackCmdAdapterNode(Node):
         # 5. EMA Filter (alpha=1.0 in default config -> identity)
         alpha = self.ema_alpha
         smoothed_vx = alpha * target_vx + (1.0 - alpha) * self.current_smoothed_vx
+        smoothed_vy = alpha * target_vy + (1.0 - alpha) * self.current_smoothed_vy
         smoothed_wz = alpha * target_wz + (1.0 - alpha) * self.current_smoothed_wz
         self.current_smoothed_vx = smoothed_vx
+        self.current_smoothed_vy = smoothed_vy
         self.current_smoothed_wz = smoothed_wz
 
         # 6. LiDAR Obstacle Safety Override (applies to BOTH tracker and navigation)
-        # Judge against the arc we are heading into: forward when driving ahead,
-        # rear when reversing. Self-returns from the robot's own legs no longer
-        # latch this on permanently (see scan_callback).
-        heading_dist = (
-            self.latest_rear_obstacle_dist if smoothed_vx < 0.0
-            else self.latest_min_obstacle_dist
-        )
+        # Judge against the arc we are actually translating into. That is not always
+        # straight ahead: while strafing toward a goal that lies off the nose, the
+        # relevant clearance is along that diagonal, and quoting the nose arc
+        # instead is exactly what made a wide-open path look blocked.
+        heading_dist = self._travel_clearance(smoothed_vx, smoothed_vy)
         status.obstacle_distance = heading_dist
 
         # `blocked` means: the controller wants to translate AND the LiDAR says no.
@@ -429,7 +472,8 @@ class TrackCmdAdapterNode(Node):
         # so it must be time-bounded and reported, not latched silently. When
         # navigating this is genuine (an actuator is physically obstructed); when
         # tracker-driven it means the tracker tried to ram a wall.
-        blocked = abs(smoothed_vx) > 0.0 and heading_dist < self.min_obstacle_distance
+        blocked = (abs(smoothed_vx) > 0.0 or abs(smoothed_vy) > 0.0) \
+            and heading_dist < self.min_obstacle_distance
         if blocked:
             if self.blocked_since is None:
                 self.blocked_since = current_time
@@ -451,10 +495,13 @@ class TrackCmdAdapterNode(Node):
                 )
 
             smoothed_vx = 0.0  # Stop the unsafe translation, allow rotation
+            smoothed_vy = 0.0
+            self.current_smoothed_vy = 0.0
         else:
             # Free to move (or never asked to), so any previous block is over.
             self.blocked_since = None
 
+        status.commanded_vy = smoothed_vy
         return smoothed_vx, smoothed_wz, status
 
     @staticmethod
@@ -503,22 +550,39 @@ class TrackCmdAdapterNode(Node):
             status.active_override_reason = (
                 f"NAV_ARRIVED dist={dist:.2f}m (deadband {self.nav_arrival_m:.2f}m)"
             )
-            return 0.0, 0.0, status
+            return 0.0, 0.0, 0.0, status
 
         # Goal in the robot body frame.
         c, s = math.cos(cyaw), math.sin(cyaw)
         bdx = c * dx + s * dy        # forward distance to the goal
         bdy = -s * dx + c * dy       # left distance to the goal
-        # Gentle lateral correction; harmless while rotation is unavailable.
-        wz = max(-self.max_wz, min(self.max_wz, bdy * self.nav_yaw_gain))
+        bearing = math.atan2(bdy, bdx)
+
+        # Drive along the body-frame BEARING of the goal rather than picking
+        # forward-or-reverse from the sign of bdx.
+        #
+        # With fore/aft only, a goal lying off the nose is approached by driving
+        # into whatever happens to be straight ahead. Measured live: the goal sat
+        # 74 deg off the nose with 2.6-4.7 m clear along that bearing but only
+        # 0.33 m clear straight ahead, so every tick was refused by the LiDAR and
+        # the mission aborted as "blocked by obstacle" after 8 s with the base
+        # displaced by 0.015 m. Strafing is executed by this gait (0.379 m for a
+        # 0.400 m command), so split the speed across both body axes.
         speed = min(self.max_vx, dist * self.nav_lin_gain)
-        if bdx >= 0.0:
-            vx = speed
-            status.active_override_reason = f"NAV_FWD dist={dist:.2f}m bdy={bdy:.2f}m"
-        else:
-            vx = -speed
-            status.active_override_reason = f"NAV_REV dist={dist:.2f}m bdy={bdy:.2f}m"
-        return vx, wz, status
+        vx = speed * (bdx / dist)
+        vy = max(-self.max_vy, min(self.max_vy, speed * (bdy / dist)))
+
+        # Rotation stays a gentle correction proportional to the lateral OFFSET,
+        # not to the bearing angle. Keying it off the angle would command a full
+        # 180 deg spin for a goal directly behind while simultaneously reversing
+        # toward it -- self-contradictory on any platform that honours angular.z.
+        # It remains a no-op on this sim, which ignores angular.z entirely.
+        wz = max(-self.max_wz, min(self.max_wz, bdy * self.nav_yaw_gain))
+        status.active_override_reason = (
+            f"NAV_MOVE dist={dist:.2f}m bearing={math.degrees(bearing):.0f}deg "
+            f"vx={vx:.3f} vy={vy:.3f}"
+        )
+        return vx, vy, wz, status
 
     def _warn_blocked(self, reason: str, now: float):
         """Throttled operator-visible warning for a sustained motion block."""
@@ -536,6 +600,10 @@ class TrackCmdAdapterNode(Node):
 
         twist_msg = Twist()
         twist_msg.linear.x = float(vx)
+        # Lateral command, non-zero only while strafing toward a navigation goal.
+        # The gait ignores angular.z on this platform but honours linear.y, so this
+        # is how a goal lying off the nose is reached without turning.
+        twist_msg.linear.y = float(status.commanded_vy)
         twist_msg.angular.z = float(wz)
 
         # In dry-run mode, cmd_vel_safe outputs commanded velocity for monitoring,

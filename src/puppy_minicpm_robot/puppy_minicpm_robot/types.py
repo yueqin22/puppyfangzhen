@@ -180,6 +180,12 @@ class SafetyStatus:
     # from phase_gated (a mission is running, the tracker just isn't its turn)
     # and from navigating (an actuator exists and is moving).
     standby: bool = False
+    # Lateral (body +y) velocity actually being commanded. Non-zero only while
+    # navigating: this platform's gait ignores angular.z, so a goal that lies off
+    # the nose is reached by strafing instead of by turning. Exposed because a
+    # "blocked" report is only interpretable once you know WHICH way the base was
+    # trying to go.
+    commanded_vy: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -194,4 +200,5 @@ class SafetyStatus:
             "phase_gated": self.phase_gated,
             "navigating": self.navigating,
             "standby": self.standby,
+            "commanded_vy": round(self.commanded_vy, 4),
         }

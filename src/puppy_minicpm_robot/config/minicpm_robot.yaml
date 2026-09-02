@@ -32,6 +32,11 @@ track_cmd_adapter_node:
     vx_positive_deadband: 0.03
     vx_negative_deadband: 0.0
     max_vx: 0.15                     # Conservative safety release default (m/s)
+    # Lateral (body +y) cap, used only while navigating. This gait ignores
+    # angular.z (103 deg commanded -> 1.3 deg turned) but executes linear.y
+    # (0.379 m for a 0.400 m command), so goals off the nose are reached by
+    # strafing rather than by a turn that never arrives.
+    max_vy: 0.15
     wz_scale: 1.2
     deadband_wz: 0.0
     max_wz: 0.30                     # Conservative safety release default (rad/s)
