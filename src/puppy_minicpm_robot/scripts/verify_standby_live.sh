@@ -160,7 +160,10 @@ restart_world() {
 check_env() {
   local odomf="$WS/verify_env_odom.txt" scanf="$WS/verify_env_scan.txt"
   : > "$odomf"; : > "$scanf"
-  echo_once /odom "" 10 > "$odomf"
+  # Ask for the position sub-struct, not the whole message: on a full Odometry
+  # echo, a bare `z:` regex is ambiguous (position z, orientation z, twist z all
+  # match) and silently reports whichever comes first.
+  echo_once /odom pose.pose.position 10 > "$odomf"
   echo_once /scan ranges 10 > "$scanf"
   ENV_OK=0
   python3 - "$odomf" "$scanf" <<'PY'
@@ -172,6 +175,10 @@ z = None
 m = re.search(r"z:\s*(-?[0-9.]+)", odom_txt)
 if m:
     z = float(m.group(1))
+mx = re.search(r"x:\s*(-?[0-9.]+)", odom_txt)
+my = re.search(r"y:\s*(-?[0-9.]+)", odom_txt)
+pose = "%s, %s" % (("%.3f" % float(mx.group(1))) if mx else "?",
+                   ("%.3f" % float(my.group(1))) if my else "?")
 
 ranges = []
 m = re.search(r"array\('f',\s*\[(.*?)\]\)", scan_txt, re.S)
@@ -184,9 +191,13 @@ if m:
 near = sum(1 for r in ranges if r < 0.35)
 frac = (near / len(ranges)) if ranges else 1.0
 
+print("  start pose (odom)  : %s" % pose)
 print("  odom z            : %s" % ("?" if z is None else "%.3f" % z))
 print("  scan rays         : %d" % len(ranges))
 print("  rays closer than 0.35 m: %.0f%%" % (frac * 100))
+print("  NOTE: Gazebo keeps the base where the last run left it; only --restart-world")
+print("        gives a known start. A low clearance here is usually inherited, not a")
+print("        sensor fault -- it was once mistaken for self-returns from the legs.")
 
 # Do NOT treat a slightly negative z as "sunk into the floor": base_footprint on
 # this URDF sits ABOUT -0.155 m at rest (measured after a clean world restart,
@@ -203,6 +214,14 @@ elif frac > 0.40:
     print("  UNHEALTHY: %.0f%% of rays read < 0.35 m -- the base is hemmed in or grounded"
           % (frac * 100))
     ok = False
+elif frac > 0.10:
+    # Not unhealthy -- this is a legitimate (if unlucky) start, and the mission
+    # may still complete. But it must be visible: a run that begins 0.27 m from a
+    # wall exercises obstacle handling, not navigation, and a naive reader would
+    # otherwise compare it against a run that started in the open.
+    print("  WARN: %.0f%% of rays read < 0.35 m -- the mission starts hemmed in."
+          % (frac * 100))
+    print("        Pass --restart-world to begin from a known pose.")
 if ok:
     print("  env health: OK")
 sys.exit(0 if ok else 1)
@@ -238,6 +257,16 @@ source "$WS/install/setup.bash"
 echo "=== kill stale nodes ==="
 kill_nodes
 sleep 3
+
+# Restart the ROS 2 daemon. After several back-to-back runs it goes stale: every
+# launched node dies immediately with `ExternalShutdownException` / `RCLError:
+# rcl_shutdown already called`, and `ros2 node list` starts failing with an
+# xmlrpc parse error -- which reads exactly like a code regression but is not.
+# Killing stale nodes is not enough; the daemon has to go too. It restarts
+# lazily on the next ros2 call.
+echo "=== restart ros2 daemon ==="
+ros2 daemon stop >/dev/null 2>&1
+sleep 2
 
 # Restart the world BEFORE our nodes launch, so they come up against fresh
 # Gazebo/SLAM rather than binding to a sim that is about to be killed.
