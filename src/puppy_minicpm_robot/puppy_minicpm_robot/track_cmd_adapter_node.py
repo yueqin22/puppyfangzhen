@@ -109,6 +109,16 @@ class TrackCmdAdapterNode(Node):
         # for a 0.400 m command, 95%). So a goal lying off the nose is reachable by
         # strafing rather than by waiting for a turn that will never happen.
         self.declare_parameter("max_vy", 0.15)
+        # Escape-from-block behaviour. Stopping dead is NOT a recovery on this
+        # platform: the only recovery the old code relied on was rotation, and
+        # rotation does not work here (see max_vy above). So when the LiDAR vetoes
+        # the commanded direction the base slides tangentially instead.
+        self.declare_parameter("escape_speed", 0.12)          # m/s cap for the slide
+        # A tangent is only accepted when its clearance exceeds the stop threshold
+        # by this factor. Without the margin the base accepts a tangent that is
+        # barely clear, immediately re-blocks, flips to the other tangent and
+        # chatters in place instead of making progress.
+        self.declare_parameter("escape_clearance_factor", 1.15)
 
         self.mode = self.get_parameter("mode").get_parameter_value().string_value
         self.vx_positive_scale = self.get_parameter("vx_positive_scale").get_parameter_value().double_value
@@ -141,6 +151,9 @@ class TrackCmdAdapterNode(Node):
         self.nav_arrival_m = self.get_parameter("nav_arrival_m").get_parameter_value().double_value
         self.nav_timeout_grace_s = self.get_parameter("nav_timeout_grace_s").get_parameter_value().double_value
         self.max_vy = self.get_parameter("max_vy").get_parameter_value().double_value
+        self.escape_speed = self.get_parameter("escape_speed").get_parameter_value().double_value
+        self.escape_clearance_factor = self.get_parameter(
+            "escape_clearance_factor").get_parameter_value().double_value
 
     def _init_mock_state(self):
         self.mode = "dry-run"
@@ -172,6 +185,8 @@ class TrackCmdAdapterNode(Node):
         self.nav_lin_gain = 0.5
         self.nav_arrival_m = 0.20
         self.nav_timeout_grace_s = 3.0
+        self.escape_speed = 0.12
+        self.escape_clearance_factor = 1.15
 
     def _init_publishers_and_subscribers(self):
         self.cmd_vel_safe_pub = self.create_publisher(Twist, "/cmd_vel_safe", 10)
@@ -355,6 +370,47 @@ class TrackCmdAdapterNode(Node):
             return fore_aft
         return self._arc_obstacle_distance(self.latest_scan, math.atan2(vy, vx))
 
+    def _escape_velocity(self, vx: float, vy: float) -> Tuple[float, float, float]:
+        """Slide tangentially out of a block; returns (evx, evy, clearance).
+
+        The previous response to a block was `vx = vy = 0` annotated "allow
+        rotation". Rotation is not available on this platform: gait_controller
+        accepts angular.z but does not execute it (0.3 rad/s for 6 s produced
+        1.28 deg of yaw instead of 103 deg). Zeroing the translation is therefore
+        not "stop and reorient", it is a deadlock -- the base pins itself against
+        the obstacle until mission_grounder times the phase out and fails the
+        mission. Measured in the live sim: a 6.0 s block at 0.33 m clearance,
+        two seconds short of the 8 s abort.
+
+        Strafing *is* available (95% of command), so recovery is a tangential
+        slide. Both tangents are scored against the LiDAR arc they would actually
+        travel through and the wider one wins; if neither is clear the base
+        genuinely has nowhere to go, and standing still is the correct answer.
+        """
+        speed = math.hypot(vx, vy)
+        if speed <= 1e-6:
+            return 0.0, 0.0, 0.0
+
+        ux, uy = vx / speed, vy / speed
+        required = self.min_obstacle_distance * max(1.0, self.escape_clearance_factor)
+        best_clear = 0.0
+        best = None
+        for tx, ty in ((-uy, ux), (uy, -ux)):  # left / right tangents
+            clear = self._travel_clearance(tx, ty)
+            if clear < required:
+                continue
+            if best is None or clear > best_clear:
+                best_clear, best = clear, (tx, ty)
+
+        if best is None:
+            return 0.0, 0.0, 0.0
+
+        tx, ty = best
+        s = min(speed, self.escape_speed)
+        evx = max(-self.max_vx, min(self.max_vx, s * tx))
+        evy = max(-self.max_vy, min(self.max_vy, s * ty))
+        return evx, evy, best_clear
+
     def compute_velocity(self, intent: Optional[TrackIntent], current_time: float) -> Tuple[float, float, SafetyStatus]:
         """Compute bounded, smoothed, and safety-verified linear/angular velocities."""
         status = SafetyStatus(
@@ -482,21 +538,46 @@ class TrackCmdAdapterNode(Node):
             status.is_safe = False
             status.lidar_override = True
 
-            if blocked_duration >= self.blocked_escalation_sec:
-                status.blocked_escalated = True
-                status.active_override_reason = (
-                    f"BLOCKED_ESCALATION ({blocked_duration:.1f}s >= "
-                    f"{self.blocked_escalation_sec}s, clearance {heading_dist:.2f}m)"
-                )
-                self._warn_blocked(status.active_override_reason, current_time)
-            else:
-                status.active_override_reason = (
-                    f"LIDAR_OBSTACLE_CLOSE ({heading_dist:.2f}m < {self.min_obstacle_distance}m)"
-                )
+            # Recovery: slide tangentially around whatever is in the way. Only
+            # while NAVIGATING -- a tracker that is blocked is following a target
+            # it cannot reach, and standing off is the right answer there.
+            escape_clear = 0.0
+            escaping = False
+            if status.navigating:
+                evx, evy, escape_clear = self._escape_velocity(smoothed_vx, smoothed_vy)
+                escaping = (abs(evx) > 1e-6 or abs(evy) > 1e-6)
 
-            smoothed_vx = 0.0  # Stop the unsafe translation, allow rotation
-            smoothed_vy = 0.0
-            self.current_smoothed_vy = 0.0
+            if escaping:
+                smoothed_vx, smoothed_vy = evx, evy
+                self.current_smoothed_vy = evy
+                # Deliberately NOT escalated. Escalation is what mission_grounder
+                # accumulates toward an abort, so flagging it here would fail a
+                # mission that is actively working its way around the obstacle.
+                # The block itself is still reported below via heading_dist, so a
+                # run that spends its whole time grazing a wall stays visible.
+                status.active_override_reason = (
+                    f"LIDAR_SIDESTEP (blocked {blocked_duration:.1f}s at "
+                    f"{heading_dist:.2f}m, sliding on {escape_clear:.2f}m clearance)"
+                )
+            else:
+                # Nowhere to go: both tangents are blocked too (or the tracker is
+                # driving, where standing off is the intended behaviour).
+                if blocked_duration >= self.blocked_escalation_sec:
+                    status.blocked_escalated = True
+                    status.active_override_reason = (
+                        f"BLOCKED_ESCALATION ({blocked_duration:.1f}s >= "
+                        f"{self.blocked_escalation_sec}s, clearance {heading_dist:.2f}m)"
+                    )
+                    self._warn_blocked(status.active_override_reason, current_time)
+                else:
+                    status.active_override_reason = (
+                        f"LIDAR_OBSTACLE_CLOSE ({heading_dist:.2f}m < "
+                        f"{self.min_obstacle_distance}m)"
+                    )
+
+                smoothed_vx = 0.0
+                smoothed_vy = 0.0
+                self.current_smoothed_vy = 0.0
         else:
             # Free to move (or never asked to), so any previous block is over.
             self.blocked_since = None

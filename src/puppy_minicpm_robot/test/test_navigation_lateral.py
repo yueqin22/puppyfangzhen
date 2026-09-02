@@ -54,6 +54,23 @@ def _scan_all_blocked(distance=0.2, n=360):
     return _fake_scan([distance] * n)
 
 
+def _scan_one_tangent_open(front=0.2, blocked_side=0.2, open_side=2.9, default=2.9, n=360):
+    """Nose walled off, one flank walled off, the other flank wide open."""
+    inc = 2.0 * math.pi / n
+    ranges = []
+    for i in range(n):
+        ang = math.degrees(-math.pi + i * inc)
+        if abs(ang) <= 30.0:
+            ranges.append(front)
+        elif 60.0 <= ang <= 120.0:
+            ranges.append(blocked_side)   # body +y flank
+        elif -120.0 <= ang <= -60.0:
+            ranges.append(open_side)      # body -y flank
+        else:
+            ranges.append(default)
+    return _fake_scan(ranges)
+
+
 class TestNavigationLateral:
     @pytest.fixture
     def adapter(self):
@@ -125,6 +142,89 @@ class TestNavigationLateral:
         assert status.commanded_vy == 0.0
         assert vx == 0.0
 
+    # ------------------------------------------------------------------
+    # Escape from a block (defect 13): stopping dead was a deadlock
+    # ------------------------------------------------------------------
+
+    def test_blocked_navigation_sidesteps_instead_of_deadlocking(self, adapter):
+        """Regression for the live 6.0 s block at 0.33 m.
+
+        The old code answered a block with vx = vy = 0 and the comment "allow
+        rotation", but rotation is not available (0.3 rad/s for 6 s turned the
+        base 1.28 deg). The base therefore pinned itself in place until
+        mission_grounder aborted at 8 s -- only 2 s of margin in the live run.
+        """
+        adapter.scan_callback(_scan_front_blocked_sides_open(front=0.33, elsewhere=2.9))
+        self._arm_navigation(adapter, (0.0, 0.0, 0.0), (1.0, 0.0))
+
+        vx, wz, status = adapter.compute_velocity(None, time.time())
+
+        assert status.lidar_override is True          # still reported as blocked...
+        assert abs(status.commanded_vy) > 0.0         # ...but no longer standing still
+        assert status.active_override_reason.startswith("LIDAR_SIDESTEP")
+        assert status.blocked_escalated is False
+        # The graze stays visible: the blocked bearing is what is reported.
+        assert status.obstacle_distance == pytest.approx(0.33)
+
+    def test_sidestep_takes_the_open_tangent(self, adapter):
+        """Both tangents are scored; the slide must use the one that is open."""
+        adapter.scan_callback(_scan_one_tangent_open())
+        self._arm_navigation(adapter, (0.0, 0.0, 0.0), (1.0, 0.0))
+
+        _, _, status = adapter.compute_velocity(None, time.time())
+
+        # +y side is walled off at 0.20 m, -y side is open at 2.9 m.
+        assert status.commanded_vy < 0.0
+
+    def test_sustained_escape_is_not_reported_as_escalation(self, adapter):
+        """A base working around an obstacle must not accumulate toward an abort.
+
+        mission_grounder aborts on `lidar_override and blocked_escalated` held for
+        8 s, so escalating here would fail a mission that is making progress.
+        """
+        adapter.scan_callback(_scan_front_blocked_sides_open(front=0.33, elsewhere=2.9))
+        self._arm_navigation(adapter, (0.0, 0.0, 0.0), (1.0, 0.0))
+
+        now = time.time()
+        adapter.blocked_since = now - 20.0  # long past the 5 s escalation window
+        adapter.last_intent_time = now
+        _, _, status = adapter.compute_velocity(None, now)
+
+        assert status.blocked_duration_s > adapter.blocked_escalation_sec
+        assert status.blocked_escalated is False
+
+    def test_nowhere_to_go_still_escalates(self, adapter):
+        """With both tangents blocked, stopping and escalating is still correct."""
+        adapter.scan_callback(_scan_all_blocked(0.2))
+        self._arm_navigation(adapter, (0.0, 0.0, 0.0), (1.0, 0.0))
+
+        now = time.time()
+        adapter.blocked_since = now - 10.0
+        adapter.last_intent_time = now
+        _, _, status = adapter.compute_velocity(None, now)
+
+        assert status.blocked_escalated is True
+        assert status.active_override_reason.startswith("BLOCKED_ESCALATION")
+        assert status.commanded_vy == 0.0
+
+    def test_tracker_block_stops_instead_of_sidestepping(self, adapter):
+        """Escape is navigation-only: a blocked follower should stand off.
+
+        The tracker is pursuing a target it cannot reach, so sliding sideways
+        would invent motion the operator never asked for.
+        """
+        adapter.mission_phase = "VISUAL_TRACKING"
+        adapter.scan_callback(_scan_front_blocked_sides_open(front=0.2, elsewhere=2.9))
+        adapter.last_intent_time = time.time()
+        intent = TrackIntent(instruction="Follow ahead", target_detected=True,
+                             confidence=0.9, dx=0.8, dy=0.0, raw_vx=0.15)
+
+        vx, _, status = adapter.compute_velocity(intent, time.time())
+
+        assert vx == 0.0
+        assert status.commanded_vy == 0.0
+        assert status.lidar_override is True
+
     def test_tracker_driving_never_commands_lateral_motion(self, adapter):
         """Strafe is a navigation-only tool; tracker following stays fore/aft."""
         adapter.mission_phase = "VISUAL_TRACKING"
@@ -140,16 +240,15 @@ class TestNavigationLateral:
         assert status.commanded_vy == 0.0
 
     def test_pure_fore_aft_still_uses_precomputed_arcs(self, adapter):
-        """A goal straight ahead keeps the original fore/aft behaviour."""
-        adapter.scan_callback(_scan_front_blocked_sides_open(front=0.33, elsewhere=2.9))
+        """A goal straight ahead on a clear path keeps the original fore/aft behaviour."""
+        adapter.scan_callback(_scan_front_blocked_sides_open(front=2.9, elsewhere=2.9))
         self._arm_navigation(adapter, (0.0, 0.0, 0.0), (1.0, 0.0))
 
         vx, wz, status = adapter.compute_velocity(None, time.time())
 
-        # Nose arc is blocked, so forward motion is refused exactly as before.
         assert status.commanded_vy == pytest.approx(0.0, abs=1e-6)
-        assert status.lidar_override is True
-        assert vx == 0.0
+        assert status.lidar_override is False
+        assert vx > 0.0
 
     def test_first_tick_before_any_scan_does_not_explode(self, adapter):
         """The first compute_velocity can precede the first LaserScan.

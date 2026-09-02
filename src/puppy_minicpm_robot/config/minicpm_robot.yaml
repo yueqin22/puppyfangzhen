@@ -37,6 +37,13 @@ track_cmd_adapter_node:
     # (0.379 m for a 0.400 m command), so goals off the nose are reached by
     # strafing rather than by a turn that never arrives.
     max_vy: 0.15
+    # Recovery from a LiDAR block. Stopping dead is not a recovery here: the
+    # only escape the old code relied on was rotation, which gait_controller
+    # does not execute, so the base pinned itself against obstacles until the
+    # mission aborted (measured: 6.0 s stuck at 0.33 m, abort fires at 8 s).
+    # A navigating base therefore slides along the tangent instead.
+    escape_speed: 0.12               # m/s cap for the tangential slide
+    escape_clearance_factor: 1.15    # a tangent must beat the stop distance by this
     wz_scale: 1.2
     deadband_wz: 0.0
     max_wz: 0.30                     # Conservative safety release default (rad/s)
