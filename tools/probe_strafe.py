@@ -1,18 +1,33 @@
-"""Measure whether the simulated base can strafe (linear.y).
+"""Measure how the simulated base actually responds to /cmd_vel, axis by axis.
 
-Rotation is demonstrably a no-op on this platform (~1.3 deg for a command worth
-103 deg), so navigation is limited to the body x-axis -- which cannot reach a
-goal that sits off to the side. Before accepting that, check whether the base can
-move sideways instead: gait_controller carries a vy_ term, and a planar-move
-plugin in Gazebo would honour linear.y directly.
+WHY THIS TOOL EXISTS
+--------------------
+Every axis-response claim in this project used to be a single measurement
+divided by WALL-CLOCK seconds. That is only sound while the simulation runs at
+1.0x real time, and nothing checked it. The same strafe command (linear.y=0.1
+for 4 s) reported 104%, then 55%, then 29% across runs with identical code,
+which is the signature of a measurement problem, not a robot problem.
 
-If strafing works, a goal 74 deg off the nose is reachable without ever turning,
-and the "can't reach a sideways goal" limitation disappears.
+So this probe:
+  1. Times itself against the SIMULATED clock (/clock). If gzserver is starved,
+     the measured efficiency stays correct instead of collapsing.
+  2. Reports the real-time factor alongside every result, so a slow sim is
+     visible rather than silent.
+  3. Sweeps all four axes in one run, so cross-axis comparisons share a single
+     environmental condition.
+  4. Watches /cmd_vel for messages it did not send. track_cmd_adapter publishes
+     at 20 Hz and will happily overwrite a probe command; previously that looked
+     exactly like "the robot ignored me".
 
-Usage (inside WSL, Gazebo running):
-    source /opt/ros/humble/setup.bash
-    source ~/puppy_ws/install/setup.bash
-    python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py [vy] [seconds]
+WHO IS DRIVING
+--------------
+With use_planar_move:=true (the default in this repo) the base is moved by the
+Gazebo planar-move plugin, NOT by the trot gait -- no gait_controller node
+exists at all. Do not read these numbers as statements about trot_gait.cpp.
+
+Usage (inside WSL, Gazebo running, nothing else publishing /cmd_vel):
+    python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py --sweep
+    python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py <vx> <vy> <wz> <seconds>
 """
 
 import math
@@ -21,88 +36,240 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 
 
-class StrafeProbe(Node):
-    def __init__(self):
-        super().__init__("strafe_probe")
+def yaw_of(q):
+    return math.atan2(2 * (q.w * q.z + q.x * q.y),
+                      1 - 2 * (q.y * q.y + q.z * q.z))
+
+
+def wrap_deg(a):
+    return math.degrees((a + math.pi) % (2 * math.pi) - math.pi)
+
+
+class AxisProbe(Node):
+    def __init__(self, use_sim_time=True):
+        # Simulated time is requested via a parameter override at construction.
+        # Do NOT instead subscribe to /clock yourself: Gazebo publishes it at
+        # ~1 kHz and rclpy's spin_once handles one callback per call, so the
+        # flood starves every other subscription. That cost a full measurement
+        # round before it was noticed.
+        overrides = []
+        if use_sim_time:
+            overrides = [Parameter("use_sim_time", Parameter.Type.BOOL, True)]
+        super().__init__("axis_probe", parameter_overrides=overrides)
+
         self.pose = None
-        self.create_subscription(Odometry, "/odom", self._odom, 10)
+        self.foreign = 0
+        self.foreign_example = None
+        # Every command this probe has ever published. Compared as a set rather
+        # than against a single "expected" value, so a delayed callback can
+        # never be mistaken for somebody else's message.
+        self._ours = set()
+
+        self.create_subscription(Odometry, "/odom", self._on_odom, 10)
+        self.create_subscription(Twist, "/cmd_vel", self._on_cmd, 20)
         self.pub = self.create_publisher(Twist, "/cmd_vel", 10)
 
-    def _odom(self, msg):
+    def _on_odom(self, msg):
         p = msg.pose.pose.position
-        q = msg.pose.pose.orientation
-        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y),
-                         1 - 2 * (q.y * q.y + q.z * q.z))
-        self.pose = (p.x, p.y, yaw)
+        self.pose = (p.x, p.y, yaw_of(msg.pose.pose.orientation))
 
-    def wait_odom(self, secs=20.0):
+    def _on_cmd(self, msg):
+        got = (round(msg.linear.x, 6), round(msg.linear.y, 6),
+               round(msg.angular.z, 6))
+        if got not in self._ours:
+            self.foreign += 1
+            if self.foreign_example is None:
+                self.foreign_example = got
+
+    def send(self, vx, vy, wz):
+        self._ours.add((round(vx, 6), round(vy, 6), round(wz, 6)))
+        t = Twist()
+        t.linear.x = vx
+        t.linear.y = vy
+        t.angular.z = wz
+        self.pub.publish(t)
+
+    def now(self):
+        # rclpy's clock is simulated time when use_sim_time is on, and system
+        # time otherwise -- so one accessor covers both cases.
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def spin(self, secs):
+        end = time.time() + secs
+        while time.time() < end:
+            rclpy.spin_once(self, timeout_sec=0.02)
+
+    def wait_odom(self, secs=30.0):
         end = time.time() + secs
         while time.time() < end and self.pose is None:
-            rclpy.spin_once(self, timeout_sec=0.3)
+            rclpy.spin_once(self, timeout_sec=0.2)
         return self.pose is not None
 
 
-def main():
-    vy = float(sys.argv[1]) if len(sys.argv) > 1 else 0.1
-    duration = float(sys.argv[2]) if len(sys.argv) > 2 else 4.0
-
-    rclpy.init()
-    node = StrafeProbe()
-    if not node.wait_odom():
-        print("no /odom received; is Gazebo running?")
-        rclpy.shutdown()
-        return
-
-    x0, y0, yaw0 = node.pose
-    print("start: x=%.3f y=%.3f yaw=%.2f deg" % (x0, y0, math.degrees(yaw0)))
-    print("commanding pure linear.y = %.2f m/s for %.1f s" % (vy, duration))
-
-    twist = Twist()
-    twist.linear.y = vy
-    start = time.time()
-    while time.time() - start < duration:
-        node.pub.publish(twist)
+def stop(node, secs=1.5):
+    end = time.time() + secs
+    while time.time() < end:
+        node.send(0.0, 0.0, 0.0)
         rclpy.spin_once(node, timeout_sec=0.05)
         time.sleep(0.05)
 
-    stop = time.time() + 1.0
-    while time.time() < stop:
-        rclpy.spin_once(node, timeout_sec=0.05)
+
+def measure(node, vx, vy, wz, duration, label, rate=100.0):
+    # Command starvation is a real confounder: if the driver decays the base's
+    # velocity between /cmd_vel messages, a probe publishing slowly measures its
+    # own publish rate rather than the robot. It looks identical to "the robot
+    # is dragging its legs", so it has to be ruled out by sweeping the rate.
+    interval = 1.0 / rate if rate > 0 else 0.0
+    stop(node, 1.5)
+    x0, y0, yaw0 = node.pose
+
+    node.foreign = 0
+    node.foreign_example = None
+
+    t0 = node.now()
+    w0 = time.time()
+    # Run until the CLOCK THE ROBOT SEES has advanced by `duration`, with a
+    # wall-clock cap so a stalled world cannot hang the probe.
+    sent = 0
+    while True:
+        node.send(vx, vy, wz)
+        sent += 1
+        rclpy.spin_once(node, timeout_sec=0.0)
+        if node.now() - t0 >= duration:
+            break
+        if time.time() - w0 > duration * 5 + 10:
+            print("  !! sim clock advanced only %.2fs in %.0fs wall -- aborting"
+                  % (node.now() - t0, time.time() - w0))
+            break
+        if interval:
+            time.sleep(interval)
+    t1 = node.now()
+    w1 = time.time()
+    stop(node, 1.0)
 
     x1, y1, yaw1 = node.pose
-    twist.linear.y = 0.0
-    for _ in range(5):
-        node.pub.publish(twist)
-        rclpy.spin_once(node, timeout_sec=0.02)
+    dsim = t1 - t0
+    dwall = w1 - w0
+    rtf = dsim / dwall if dwall > 0 else 0.0
 
     dx, dy = x1 - x0, y1 - y0
-    total = math.hypot(dx, dy)
-    # Project the world displacement onto the body +y axis (yaw0 + 90 deg).
-    body_y = math.degrees(yaw0) + 90.0
-    bx, by = math.cos(math.radians(body_y)), math.sin(math.radians(body_y))
-    lateral = dx * bx + dy * by
-    ideal = vy * duration
+    dyaw = wrap_deg(yaw1 - yaw0)
 
-    print("end  : x=%.3f y=%.3f yaw=%.2f deg" % (x1, y1, math.degrees(yaw1)))
-    print("total displacement   = %.3f m" % total)
-    print("lateral (body +y)    = %.3f m   (ideal %.3f m)" % (lateral, ideal))
-    print("yaw drift            = %.2f deg" % math.degrees(
-        ((yaw1 - yaw0 + math.pi) % (2 * math.pi)) - math.pi))
+    # Project world displacement onto the body axes at the START heading.
+    c, s = math.cos(yaw0), math.sin(yaw0)
+    fwd = dx * c + dy * s      # body +x
+    lat = -dx * s + dy * c     # body +y
 
-    if abs(lateral) >= 0.5 * abs(ideal):
-        print("VERDICT: STRAFE WORKS (%.0f%% of ideal). A sideways goal is reachable"
-              % (100.0 * lateral / ideal if ideal else 0.0))
-        print("         without ever turning -- navigation should use linear.y.")
+    print()
+    print("--- %s ---" % label)
+    print("  command       : vx=%+.3f vy=%+.3f wz=%+.3f for %.1f s (sim) @%.0fHz"
+          % (vx, vy, wz, duration, sent / max(dwall, 1e-9)))
+    print("  sim elapsed   : %.2f s   wall %.2f s   RTF %.3fx" % (dsim, dwall, rtf))
+    print("  body forward  : %+.3f m   (ideal %+.3f)" % (fwd, vx * dsim))
+    print("  body lateral  : %+.3f m   (ideal %+.3f)" % (lat, vy * dsim))
+    print("  yaw change    : %+.2f deg (ideal %+.2f)"
+          % (dyaw, math.degrees(wz * dsim)))
+    if node.foreign:
+        print("  !! %d foreign /cmd_vel messages seen (e.g. %s); another node is"
+              % (node.foreign, node.foreign_example))
+        print("     overwriting this probe -- results are meaningless.")
+        return None
+
+    return {"label": label, "dsim": dsim, "rtf": rtf, "fwd": fwd, "lat": lat,
+            "dyaw": dyaw, "ideal_fwd": vx * dsim, "ideal_lat": vy * dsim,
+            "ideal_yaw": math.degrees(wz * dsim)}
+
+
+def main():
+    args = sys.argv[1:]
+    rclpy.init()
+    node = AxisProbe(use_sim_time=True)
+    if not node.wait_odom():
+        print("no /odom received; is Gazebo running?")
+        rclpy.shutdown()
+        return 1
+
+    # Ask for simulated time, but verify it actually ticks. A node with
+    # use_sim_time set and no /clock publisher reports a frozen clock, which
+    # would make every duration loop hit the safety cap.
+    node.spin(2.0)
+    t0 = node.now()
+    node.spin(1.0)
+    if node.now() - t0 < 0.5:
+        print("WARNING: use_sim_time set but the clock is frozen (no /clock).")
+        print("         Falling back to wall-clock timing; efficiency numbers")
+        print("         are then only valid while RTF is 1.0 -- watch the RTF")
+        print("         column in the summary.")
+        node.destroy_node()
+        node = AxisProbe(use_sim_time=False)
+        if not node.wait_odom():
+            print("lost /odom after re-init")
+            rclpy.shutdown()
+            return 1
     else:
-        print("VERDICT: strafe is NOT executed (%.0f%% of ideal)."
-              % (100.0 * lateral / ideal if ideal else 0.0))
-        print("         Translation is limited to the body x-axis only.")
+        print("using simulated time (RTF reported per axis)")
+
+    rate = 100.0
+    sweep = False
+    positional = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--sweep":
+            sweep = True
+        elif a == "--rate":
+            i += 1
+            rate = float(args[i]) if i < len(args) else rate
+        else:
+            positional.append(a)
+        i += 1
+
+    if sweep:
+        cases = [
+            (0.1, 0.0, 0.0, 4.0, "FORWARD  vx=+0.1"),
+            (0.0, 0.1, 0.0, 4.0, "STRAFE +y vy=+0.1"),
+            (0.0, -0.1, 0.0, 4.0, "STRAFE -y vy=-0.1"),
+            (0.0, 0.0, 0.3, 6.0, "TURN     wz=+0.3"),
+        ]
+    elif len(positional) == 4:
+        cases = [(float(positional[0]), float(positional[1]),
+                  float(positional[2]), float(positional[3]), "CUSTOM")]
+    else:
+        print("usage: probe_strafe.py [--sweep] [--rate HZ]")
+        print("       probe_strafe.py <vx> <vy> <wz> <seconds> [--rate HZ]")
+        rclpy.shutdown()
+        return 2
+
+    results = []
+    for vx, vy, wz, secs, label in cases:
+        r = measure(node, vx, vy, wz, secs, label, rate=rate)
+        if r:
+            results.append(r)
+
+    print()
+    print("================ SUMMARY ================")
+    print("%-18s %8s %8s %8s %10s" % ("axis", "actual", "ideal", "ratio", "RTF"))
+    for r in results:
+        if abs(r["ideal_fwd"]) > 1e-9:
+            key, act, ideal = "forward", r["fwd"], r["ideal_fwd"]
+        elif abs(r["ideal_lat"]) > 1e-9:
+            key, act, ideal = "lateral", r["lat"], r["ideal_lat"]
+        else:
+            key, act, ideal = "yaw(deg)", r["dyaw"], r["ideal_yaw"]
+        ratio = act / ideal if abs(ideal) > 1e-9 else float("nan")
+        print("%-18s %8.3f %8.3f %7.0f%% %10.3f"
+              % (r["label"] + " " + key, act, ideal, 100 * ratio, r["rtf"]))
+    print()
+    print("Read the RTF column first: a ratio near 100% at RTF 1.0 means the axis")
+    print("works. A low ratio at low RTF is a measurement artefact, not a defect.")
     rclpy.shutdown()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
