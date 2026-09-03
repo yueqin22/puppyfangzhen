@@ -32,15 +32,19 @@ track_cmd_adapter_node:
     vx_positive_deadband: 0.03
     vx_negative_deadband: 0.0
     max_vx: 0.15                     # Conservative safety release default (m/s)
-    # Lateral (body +y) cap, used only while navigating. This gait ignores
-    # angular.z (103 deg commanded -> 1.3 deg turned) but executes linear.y
-    # (0.379 m for a 0.400 m command), so goals off the nose are reached by
-    # strafing rather than by a turn that never arrives.
+    # Lateral (body +y) cap, used only while navigating. Yaw is not executed
+    # (103 deg commanded -> 1.1 deg turned) but linear.y is (0.416 m for a
+    # 0.400 m command, 104%), so goals off the nose are reached by strafing
+    # rather than by a turn that never arrives.
+    # Cause: with use_planar_move:=true the base is driven by
+    # libgazebo_ros_planar_move.so, whose Model::SetLinearVel/SetAngularVel pair
+    # expresses translation correctly but rotation incorrectly for a multi-link
+    # model. The trot gait is not in the loop at all in this configuration.
     max_vy: 0.15
     # Recovery from a LiDAR block. Stopping dead is not a recovery here: the
-    # only escape the old code relied on was rotation, which gait_controller
-    # does not execute, so the base pinned itself against obstacles until the
-    # mission aborted (measured: 6.0 s stuck at 0.33 m, abort fires at 8 s).
+    # only escape the old code relied on was rotation, which is not executed,
+    # so the base pinned itself against obstacles until the mission aborted
+    # (measured: 6.0 s stuck at 0.33 m, abort fires at 8 s).
     # A navigating base therefore slides along the tangent instead.
     escape_speed: 0.12               # m/s cap for the tangential slide
     escape_clearance_factor: 1.15    # a tangent must beat the stop distance by this

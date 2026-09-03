@@ -181,8 +181,8 @@ class SafetyStatus:
     # and from navigating (an actuator exists and is moving).
     standby: bool = False
     # Lateral (body +y) velocity actually being commanded. Non-zero only while
-    # navigating: this platform's gait ignores angular.z, so a goal that lies off
-    # the nose is reached by strafing instead of by turning. Exposed because a
+    # navigating: rotation is not executed on this platform, so a goal that lies
+    # off the nose is reached by strafing instead of by turning. Exposed because a
     # "blocked" report is only interpretable once you know WHICH way the base was
     # trying to go.
     commanded_vy: float = 0.0

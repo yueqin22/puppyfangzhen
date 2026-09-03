@@ -2,10 +2,20 @@
 
 Background, all measured on the live sim rather than assumed:
 
-* The gait ignores angular.z: commanding 0.3 rad/s for 6 s should turn the base
-  103 deg but turned it 1.3 deg. Navigation therefore cannot turn to face a goal.
-* The gait DOES execute linear.y: 0.1 m/s for 4 s produced 0.379 m of lateral
-  travel against an ideal 0.400 m (95%).
+* Yaw is not executed: commanding 0.3 rad/s for 6 s should turn the base 103 deg
+  but turned it 1.1 deg -- and Gazebo ground truth agrees with /odom, so this is
+  a real motion limitation, not a reporting artefact. Navigation therefore
+  cannot turn to face a goal.
+* linear.y IS executed: 0.1 m/s for 4 s produced 0.416 m of lateral travel
+  against an ideal 0.400 m (104%) with only 0.5 deg of yaw drift.
+
+The limitation belongs to the planar-move stand-in, not to the trot gait: with
+use_planar_move:=true the URDF loads libgazebo_ros_planar_move.so and no joint
+controller runs (there is no gait_controller node at all). That plugin drives the
+model with Model::SetLinearVel + Model::SetAngularVel -- the first is a valid
+rigid translation, the second is not a valid rigid rotation for a 12-joint model,
+so the joints cancel it. Fixing trot_gait.cpp would change nothing while this
+plugin is in the loop.
 
 Before this change navigation picked forward-or-reverse from the sign of the
 body-frame x offset, so a goal lying off the nose was approached by driving into

@@ -505,8 +505,9 @@ class TestTrackCmdAdapter:
     def test_navigates_reverses_when_goal_is_behind(self, adapter):
         """Goal directly behind -> reverse toward it (vx<0); no turn needed.
 
-        This sim's gait does not execute angular.z, so the robot cannot turn to
-        face a behind goal; it reaches it by driving backward along its x-axis.
+        Rotation is not executed in this sim (~1% of the commanded yaw rate), so
+        the robot cannot turn to face a behind goal; it reaches it by driving
+        backward along its x-axis.
         """
         self._arm_nav(adapter, [0.0, 0.0, 0.0], [-2.0, 0.0])   # 180 deg behind
         now = time.time()

@@ -103,11 +103,24 @@ class TrackCmdAdapterNode(Node):
         self.declare_parameter("nav_lin_gain", 0.5)        # vx = clamp(dist * gain, max_vx)
         self.declare_parameter("nav_arrival_m", 0.20)      # stop this far from the goal
         self.declare_parameter("nav_timeout_grace_s", 3.0) # hold if pose/goal unknown this long
-        # Cap for the lateral (body +y) component. Measured on the live sim: the
-        # gait ignores angular.z almost completely (a command worth 103 deg of yaw
-        # turned the base 1.3 deg) but it DOES execute linear.y (0.379 m travelled
-        # for a 0.400 m command, 95%). So a goal lying off the nose is reachable by
-        # strafing rather than by waiting for a turn that will never happen.
+        # Cap for the lateral (body +y) component.
+        #
+        # Measured on the live sim: commanding a pure yaw rate worth 103 deg
+        # turned the base 1.1 deg, while a pure linear.y worth 0.400 m moved it
+        # 0.416 m (104%). So a goal lying off the nose is reachable by strafing
+        # rather than by waiting for a turn that will not happen.
+        #
+        # The cause is NOT the trot gait -- the gait is not even in the loop. With
+        # use_planar_move:=true (the default) the URDF loads
+        # libgazebo_ros_planar_move.so and no joint controller exists at all;
+        # `ros2 node list` shows no gait_controller. That plugin drives the model
+        # with Model::SetLinearVel + Model::SetAngularVel. Identical linear
+        # velocity on every link is a valid rigid translation, so linear.x/y work
+        # (~100%). Identical angular velocity about each link's OWN centre, with
+        # no omega x r term, is NOT a valid rigid rotation for a 12-joint model,
+        # so the joints cancel it within a few solver steps (~1%). An external
+        # z-torque of 0.5 N*m also yields 0.12 deg, because the plugin rewrites
+        # the model velocity every 20 ms from the last command.
         self.declare_parameter("max_vy", 0.15)
         # Escape-from-block behaviour. Stopping dead is NOT a recovery on this
         # platform: the only recovery the old code relied on was rotation, and
@@ -374,9 +387,10 @@ class TrackCmdAdapterNode(Node):
         """Slide tangentially out of a block; returns (evx, evy, clearance).
 
         The previous response to a block was `vx = vy = 0` annotated "allow
-        rotation". Rotation is not available on this platform: gait_controller
-        accepts angular.z but does not execute it (0.3 rad/s for 6 s produced
-        1.28 deg of yaw instead of 103 deg). Zeroing the translation is therefore
+        rotation". Rotation is not available on this platform: commanded yaw
+        yields ~1% of the requested rate (0.3 rad/s for 6 s produced 1.1 deg
+        instead of 103 deg, confirmed against Gazebo ground truth, not just
+        /odom). Zeroing the translation is therefore
         not "stop and reorient", it is a deadlock -- the base pins itself against
         the obstacle until mission_grounder times the phase out and fails the
         mission. Measured in the live sim: a 6.0 s block at 0.33 m clearance,
@@ -613,12 +627,14 @@ class TrackCmdAdapterNode(Node):
     def _nav_target_velocity(self, status: 'SafetyStatus', current_time: float) -> Tuple[float, float, 'SafetyStatus']:
         """Drive toward self.nav_goal using self.robot_pose (map frame).
 
-        This sim's gait does NOT execute rotation from /cmd_vel.angular.z (an
-        in-place turn command yields < 1 deg of yaw), so the robot cannot turn
-        to face the goal. Instead we reach it the way a non-rotating platform
-        does: express the goal in the robot body frame and drive FORWARD when it
-        is ahead or BACKWARD when it is behind, along the body x-axis. The LiDAR
-        override (run by the caller) still zeroes motion near walls.
+        This sim does NOT execute rotation from /cmd_vel.angular.z: an in-place
+        turn yields ~1% of the commanded rate, confirmed against Gazebo ground
+        truth as well as /odom. So the robot cannot turn to face the goal, and we
+        reach it the way a non-rotating platform does: express the goal in the
+        robot body frame and drive along that bearing. The LiDAR override (run by
+        the caller) still zeroes motion near walls.
+        (The limitation belongs to the planar-move stand-in plugin, not to the
+        trot gait -- see the note at the max_vy parameter.)
         """
         status.navigating = True
         cx, cy = self.robot_pose[0], self.robot_pose[1]
@@ -647,8 +663,9 @@ class TrackCmdAdapterNode(Node):
         # 74 deg off the nose with 2.6-4.7 m clear along that bearing but only
         # 0.33 m clear straight ahead, so every tick was refused by the LiDAR and
         # the mission aborted as "blocked by obstacle" after 8 s with the base
-        # displaced by 0.015 m. Strafing is executed by this gait (0.379 m for a
-        # 0.400 m command), so split the speed across both body axes.
+        # displaced by 0.015 m. Strafing IS executed (0.416 m for a 0.400 m
+        # command, 104%, with only 0.5 deg of yaw drift), so split the speed
+        # across both body axes.
         speed = min(self.max_vx, dist * self.nav_lin_gain)
         vx = speed * (bdx / dist)
         vy = max(-self.max_vy, min(self.max_vy, speed * (bdy / dist)))
@@ -682,8 +699,9 @@ class TrackCmdAdapterNode(Node):
         twist_msg = Twist()
         twist_msg.linear.x = float(vx)
         # Lateral command, non-zero only while strafing toward a navigation goal.
-        # The gait ignores angular.z on this platform but honours linear.y, so this
-        # is how a goal lying off the nose is reached without turning.
+        # Rotation is not executed on this platform (~1% of the commanded yaw
+        # rate) but linear.y is (~104%), so this is how a goal lying off the nose
+        # is reached without turning.
         twist_msg.linear.y = float(status.commanded_vy)
         twist_msg.angular.z = float(wz)
 
