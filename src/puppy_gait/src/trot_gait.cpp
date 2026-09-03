@@ -46,6 +46,17 @@ FootPosition TrotGait::generateTrajectory(double phase, double step_x, double st
     return foot;
 }
 
+// Hip offset of a leg in the body frame, REP-103 (+x forward, +y left).
+// Keep in sync with the xacro that builds the robot: FR/RR sit at negative y
+// (right side) and FR/FL at positive x (front).
+static void hipOffset(LegId leg, double half_length, double half_width,
+                      double& x, double& y) {
+    const bool front = (leg == LegId::FR || leg == LegId::FL);
+    const bool right = (leg == LegId::FR || leg == LegId::RR);
+    x = front ? +half_length : -half_length;
+    y = right ? -half_width : +half_width;
+}
+
 FootPosition TrotGait::getFootPosition(LegId leg, double t,
                                          double vx, double vy, double wz) const {
     // Normalize time to [0..1] phase
@@ -55,23 +66,42 @@ FootPosition TrotGait::getFootPosition(LegId leg, double t,
     // Add leg-specific phase offset
     double leg_phase = std::fmod(phase + getPhaseOffset(leg), 1.0);
 
-    // Compute step length from velocity command
-    // step = velocity * period (distance per cycle)
-    double step_x = vx * params_.period;
+    // Where this leg's hip sits in the body frame.
+    double x_i = 0.0, y_i = 0.0;
+    hipOffset(leg, params_.half_length, params_.half_width, x_i, y_i);
 
-    // Lateral and rotational steps depend on leg position
-    double step_y = 0.0;
-
-    // For rotation (wz), left and right legs have opposite lateral steps
-    // This creates a turning motion
-    bool is_right = (leg == LegId::FR || leg == LegId::RR);
-    double rot_step = wz * params_.period * 0.1;  // scaled rotation
-
-    if (is_right) {
-        step_y = -vy * params_.period - rot_step;
-    } else {
-        step_y = vy * params_.period + rot_step;
-    }
+    // Rigid-body decomposition.
+    //
+    // A foot planted at body offset (x_i, y_i) has world velocity
+    //     V_i = (vx - wz*y_i, vy + wz*x_i)
+    // and staying planted means sweeping it by the negative of that, measured
+    // in the body frame. generateTrajectory sweeps the foot by (-step_x,
+    // -step_y) over a stance lasting duty_factor of one cycle, so
+    //     step = V_i * period * duty_factor
+    //
+    // Two consequences, both of which the previous code got wrong:
+    //
+    //   * step_x must depend on y_i (LEFT/RIGHT). The fore/aft component of a
+    //     turn is -wz*y_i, so the left and right legs must take different
+    //     stride lengths. The old code used vx*period for every leg, so a turn
+    //     command produced no fore/aft differentiation at all.
+    //
+    //   * step_y must depend on x_i (FRONT/REAR) for the rotational term, and
+    //     must have NO leg dependence at all for the plain vy term. The old
+    //     code flipped both by left/right, which is itself a rotation: a vy
+    //     command yawed on the spot instead of strafing, and a wz command had
+    //     its front and rear contributions cancel.
+    //
+    // The duty_factor term is not cosmetic. A pair is only in stance for that
+    // fraction of the cycle, so omitting it makes the base travel 1/duty times
+    // the commanded speed -- 2x at the default duty of 0.5.
+    //
+    // Both claims are checked offline by tools/check_gait_kinematics.py, which
+    // solves for the rigid motion implied by the four foot paths and reports
+    // the residual when the legs disagree.
+    const double stance_time = params_.period * params_.duty_factor;
+    const double step_x = (vx - wz * y_i) * stance_time;
+    const double step_y = (vy + wz * x_i) * stance_time;
 
     return generateTrajectory(leg_phase, step_x, step_y);
 }

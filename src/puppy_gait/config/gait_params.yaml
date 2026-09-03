@@ -7,3 +7,11 @@ gait_controller:
     body_height: 0.205     # meters, PuppyPi nominal standing height
     thigh_length: 0.105
     calf_length: 0.115
+    # Hip offsets in the body frame. These are the lever arm that turns a yaw
+    # rate into per-leg foot motion, so they MUST match the URDF:
+    #   x = body_length/2 - 0.02         = 0.130
+    #   y = body_width/2 + hip_length/2  = 0.1125
+    # Getting them wrong does not stop the robot walking; it silently scales
+    # every turn and strafe.
+    hip_half_length: 0.130
+    hip_half_width: 0.1125

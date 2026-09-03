@@ -13,6 +13,13 @@ struct GaitParams {
     double step_length;   // forward step length [m]
     double step_height;   // foot lift height [m]
     double body_height;   // standing height [m]
+    // Hip offsets from the body origin, REP-103 frame (+x forward, +y left).
+    // These set the lever arm that turns a yaw-rate command into per-leg foot
+    // motion, so they must match the URDF, not be guesses:
+    //   x = +/-(body_length/2 - 0.02)          -> 0.130
+    //   y = +/-(body_width/2 + hip_length/2)   -> 0.1125
+    double half_length;   // fore/aft hip half-spacing [m]
+    double half_width;    // lateral hip half-spacing [m]
 };
 
 // Leg identifiers
@@ -25,11 +32,13 @@ enum class LegId {
 
 // Default trot gait parameters
 constexpr GaitParams DEFAULT_GAIT = {
-    0.5,   // 0.5s per cycle
-    0.5,   // 50% stance, 50% swing
-    0.08,  // 8cm step
-    0.05,  // 5cm lift
-    0.28   // 28cm standing height
+    0.5,     // 0.5s per cycle
+    0.5,     // 50% stance, 50% swing
+    0.08,    // 8cm step
+    0.05,    // 5cm lift
+    0.28,    // 28cm standing height
+    0.130,   // fore/aft hip half-spacing, from puppy.urdf.xacro
+    0.1125   // lateral hip half-spacing, from puppy.urdf.xacro
 };
 
 /**

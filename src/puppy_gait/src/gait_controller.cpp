@@ -23,6 +23,9 @@ GaitController::GaitController()
     this->declare_parameter("body_height", 0.205);
     this->declare_parameter("thigh_length", 0.105);
     this->declare_parameter("calf_length", 0.115);
+    // Hip offsets set the lever arm for turning; they must match the URDF.
+    this->declare_parameter("hip_half_length", DEFAULT_GAIT.half_length);
+    this->declare_parameter("hip_half_width", DEFAULT_GAIT.half_width);
 
     control_rate_ = this->get_parameter("control_rate").as_double();
 
@@ -32,7 +35,16 @@ GaitController::GaitController()
     params.step_length = this->get_parameter("step_length").as_double();
     params.step_height = this->get_parameter("step_height").as_double();
     params.body_height = this->get_parameter("body_height").as_double();
+    params.half_length = this->get_parameter("hip_half_length").as_double();
+    params.half_width = this->get_parameter("hip_half_width").as_double();
     gait_.setParams(params);
+
+    if (params.half_length <= 0.0 || params.half_width <= 0.0) {
+      RCLCPP_WARN(this->get_logger(),
+                  "hip_half_length/hip_half_width must be positive (got %.3f, "
+                  "%.3f); turning and strafing will be wrong.",
+                  params.half_length, params.half_width);
+    }
     ik_ = InverseKinematics({
         this->get_parameter("thigh_length").as_double(),
         this->get_parameter("calf_length").as_double()});
