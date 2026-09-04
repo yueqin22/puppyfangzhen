@@ -21,6 +21,13 @@ except ImportError:
     HAS_RCLPY = False
     Node = object
 
+    # Minimal stand-in for geometry_msgs/Twist so the twist-building logic
+    # (and its unit tests) runs headless without ROS installed.
+    class Twist:
+        def __init__(self):
+            self.linear = type("Vec3", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+            self.angular = type("Vec3", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+
 from .types import TrackIntent, SafetyStatus, TrackMode
 
 
@@ -105,10 +112,14 @@ class TrackCmdAdapterNode(Node):
         self.declare_parameter("nav_timeout_grace_s", 3.0) # hold if pose/goal unknown this long
         # Cap for the lateral (body +y) component.
         #
-        # Measured on the live sim: commanding a pure yaw rate worth 103 deg
-        # turned the base 1.1 deg, while a pure linear.y worth 0.400 m moved it
-        # 0.416 m (104%). So a goal lying off the nose is reachable by strafing
-        # rather than by waiting for a turn that will not happen.
+        # On the live sim the base's response is NOT a fixed fraction of the
+        # command: forward tracks ~95-100% reliably, but lateral and yaw both
+        # swing with the sim's real-time factor (RTF). Measured across runs:
+        # yaw reached 1 deg, 17 deg, then 99 deg for the SAME 103-deg command as
+        # RTF went 0.85 -> 0.88 -> 1.01; lateral reached 82% -> 97% -> 118% over
+        # the same runs. So turning is UNRELIABLE on this stand-in and a goal
+        # lying off the nose is reached by strafing, which always works, rather
+        # than by waiting for a turn whose magnitude is not reproducible.
         #
         # The cause is NOT the trot gait -- the gait is not even in the loop. With
         # use_planar_move:=true (the default) the URDF loads
@@ -118,10 +129,20 @@ class TrackCmdAdapterNode(Node):
         # velocity on every link is a valid rigid translation, so linear.x/y work
         # (~100%). Identical angular velocity about each link's OWN centre, with
         # no omega x r term, is NOT a valid rigid rotation for a 12-joint model,
-        # so the joints cancel it within a few solver steps (~1%). An external
-        # z-torque of 0.5 N*m also yields 0.12 deg, because the plugin rewrites
+        # so the free (revolute) legs fight it and the net yaw depends on how the
+        # solver integrates that fight at the current RTF -- hence the swing, not
+        # a constant 1%. An external z-torque of 0.5 N*m also yields little yaw,
+        # because the plugin rewrites
         # the model velocity every 20 ms from the last command.
         self.declare_parameter("max_vy", 0.15)
+        # The hover stand-in base achieves only ~82% of a lateral (linear.y)
+        # command: at vx = vy = 0.1 m/s for 4 s it travelled 0.400 m forward
+        # (100%) but only 0.339 / 0.327 m laterally (83% / 82%), turning 1%.
+        # strafe_gain compensates the command at the wire (see _build_twist) so
+        # navigation reaches the lateral velocity it intended. 1.22 ~= 1/0.822.
+        # Leave at 1.0 for a platform that already tracks lateral commands (the
+        # real trot gait), so this parameter never silently changes behaviour.
+        self.declare_parameter("strafe_gain", 1.0)
         # Escape-from-block behaviour. Stopping dead is NOT a recovery on this
         # platform: the only recovery the old code relied on was rotation, and
         # rotation does not work here (see max_vy above). So when the LiDAR vetoes
@@ -164,6 +185,7 @@ class TrackCmdAdapterNode(Node):
         self.nav_arrival_m = self.get_parameter("nav_arrival_m").get_parameter_value().double_value
         self.nav_timeout_grace_s = self.get_parameter("nav_timeout_grace_s").get_parameter_value().double_value
         self.max_vy = self.get_parameter("max_vy").get_parameter_value().double_value
+        self.strafe_gain = self.get_parameter("strafe_gain").get_parameter_value().double_value
         self.escape_speed = self.get_parameter("escape_speed").get_parameter_value().double_value
         self.escape_clearance_factor = self.get_parameter(
             "escape_clearance_factor").get_parameter_value().double_value
@@ -192,6 +214,7 @@ class TrackCmdAdapterNode(Node):
         self.blocked_log_period_sec = 5.0
         self.gate_by_mission_phase = True
         self.max_vy = 0.15
+        self.strafe_gain = 1.0
         self.tracking_phases = ["VISUAL_TRACKING"]
         self.nav_yaw_gain = 2.0
         self.nav_align_rad = 0.35
@@ -387,10 +410,11 @@ class TrackCmdAdapterNode(Node):
         """Slide tangentially out of a block; returns (evx, evy, clearance).
 
         The previous response to a block was `vx = vy = 0` annotated "allow
-        rotation". Rotation is not available on this platform: commanded yaw
-        yields ~1% of the requested rate (0.3 rad/s for 6 s produced 1.1 deg
-        instead of 103 deg, confirmed against Gazebo ground truth, not just
-        /odom). Zeroing the translation is therefore
+        rotation". Rotation is NOT a reliable recovery on this platform: the same
+        in-place yaw command (0.3 rad/s for 6 s, ideal 103 deg) produced 1 deg,
+        17 deg, then 99 deg across runs as the sim real-time factor swung
+        0.85 -> 0.88 -> 1.01 -- confirmed against Gazebo ground truth, not just
+        /odom. Zeroing the translation therefore
         not "stop and reorient", it is a deadlock -- the base pins itself against
         the obstacle until mission_grounder times the phase out and fails the
         mission. Measured in the live sim: a 6.0 s block at 0.33 m clearance,
@@ -627,10 +651,11 @@ class TrackCmdAdapterNode(Node):
     def _nav_target_velocity(self, status: 'SafetyStatus', current_time: float) -> Tuple[float, float, 'SafetyStatus']:
         """Drive toward self.nav_goal using self.robot_pose (map frame).
 
-        This sim does NOT execute rotation from /cmd_vel.angular.z: an in-place
-        turn yields ~1% of the commanded rate, confirmed against Gazebo ground
-        truth as well as /odom. So the robot cannot turn to face the goal, and we
-        reach it the way a non-rotating platform does: express the goal in the
+        This sim does NOT execute rotation RELIABLY from /cmd_vel.angular.z: the
+        same in-place yaw command produced 1 deg, 17 deg, then 99 deg across runs
+        as the sim real-time factor swung (confirmed against Gazebo ground truth,
+        not just /odom). So the robot cannot depend on turning to face the goal,
+        and we reach it the way a non-rotating platform does: express the goal in the
         robot body frame and drive along that bearing. The LiDAR override (run by
         the caller) still zeroes motion near walls.
         (The limitation belongs to the planar-move stand-in plugin, not to the
@@ -691,19 +716,36 @@ class TrackCmdAdapterNode(Node):
         self._last_blocked_log = now
         self.get_logger().warn(f"[Safety] {reason}")
 
+    def _build_twist(self, vx: float, vy: float, wz: float) -> 'Twist':
+        """Build the /cmd_vel message from the resolved body-frame velocity.
+
+        strafe_gain is applied to the LATERAL component ONLY, and ONLY here at
+        the wire. commanded_vy (the navigation intent consumed by clearance,
+        escape and reporting) is left untouched, so the gain never disturbs the
+        direction-based logic. Forward measures ~95-100% reliably and is left
+        unscaled; turning is unreliable on this stand-in (1%-96% of the commanded
+        yaw as the sim RTF varies) so navigation does not rely on it and wz is
+        passed through unchanged.
+        """
+        twist_msg = Twist()
+        twist_msg.linear.x = float(vx)
+        # Lateral command, non-zero only while strafing toward a navigation goal.
+        # Forward (linear.x) tracks ~95-100% reliably and is left unscaled.
+        # Turning is unreliable on this stand-in (1%-96% of the commanded yaw as
+        # the sim RTF varies), so navigation does not rely on it and wz is passed
+        # through unchanged. strafe_gain compensates the lateral command at the
+        # wire only; it is left at 1.0 here because the stand-in's lateral effort
+        # is itself RTF-dependent (82-118%) and not absolutely calibratable.
+        twist_msg.linear.y = float(vy * self.strafe_gain)
+        twist_msg.angular.z = float(wz)
+        return twist_msg
+
     def timer_callback(self):
         now = time.time()
         vx, wz, status = self.compute_velocity(self.last_intent, now)
         self.safety_status = status
 
-        twist_msg = Twist()
-        twist_msg.linear.x = float(vx)
-        # Lateral command, non-zero only while strafing toward a navigation goal.
-        # Rotation is not executed on this platform (~1% of the commanded yaw
-        # rate) but linear.y is (~104%), so this is how a goal lying off the nose
-        # is reached without turning.
-        twist_msg.linear.y = float(status.commanded_vy)
-        twist_msg.angular.z = float(wz)
+        twist_msg = self._build_twist(vx, status.commanded_vy, wz)
 
         # In dry-run mode, cmd_vel_safe outputs commanded velocity for monitoring,
         # but live cmd_vel is strictly suppressed to 0.

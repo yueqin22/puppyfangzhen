@@ -27,7 +27,11 @@ exists at all. Do not read these numbers as statements about trot_gait.cpp.
 
 Usage (inside WSL, Gazebo running, nothing else publishing /cmd_vel):
     python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py --sweep
+    python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py --sweep --strafe-gain 1.22
     python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py <vx> <vy> <wz> <seconds>
+
+--strafe-gain G multiplies only the lateral command by G before sending, to
+verify a platform-compensation gain closes the loop (ratio -> 100% at G = 1/eff).
 """
 
 import math
@@ -119,7 +123,7 @@ def stop(node, secs=1.5):
         time.sleep(0.05)
 
 
-def measure(node, vx, vy, wz, duration, label, rate=100.0):
+def measure(node, vx, vy, wz, duration, label, rate=100.0, vy_gain=1.0):
     # Command starvation is a real confounder: if the driver decays the base's
     # velocity between /cmd_vel messages, a probe publishing slowly measures its
     # own publish rate rather than the robot. It looks identical to "the robot
@@ -137,7 +141,7 @@ def measure(node, vx, vy, wz, duration, label, rate=100.0):
     # wall-clock cap so a stalled world cannot hang the probe.
     sent = 0
     while True:
-        node.send(vx, vy, wz)
+        node.send(vx, vy * vy_gain, wz)
         sent += 1
         rclpy.spin_once(node, timeout_sec=0.0)
         if node.now() - t0 >= duration:
@@ -216,6 +220,7 @@ def main():
 
     rate = 100.0
     sweep = False
+    vy_gain = 1.0
     positional = []
     i = 0
     while i < len(args):
@@ -225,6 +230,9 @@ def main():
         elif a == "--rate":
             i += 1
             rate = float(args[i]) if i < len(args) else rate
+        elif a == "--strafe-gain":
+            i += 1
+            vy_gain = float(args[i]) if i < len(args) else vy_gain
         else:
             positional.append(a)
         i += 1
@@ -247,7 +255,7 @@ def main():
 
     results = []
     for vx, vy, wz, secs, label in cases:
-        r = measure(node, vx, vy, wz, secs, label, rate=rate)
+        r = measure(node, vx, vy, wz, secs, label, rate=rate, vy_gain=vy_gain)
         if r:
             results.append(r)
 

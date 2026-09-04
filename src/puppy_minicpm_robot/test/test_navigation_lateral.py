@@ -1,21 +1,24 @@
 """Navigation lateral (strafe) behaviour of TrackCmdAdapterNode.
 
-Background, all measured on the live sim rather than assumed:
+Background, measured on the live sim (and re-measured -- the numbers move):
 
-* Yaw is not executed: commanding 0.3 rad/s for 6 s should turn the base 103 deg
-  but turned it 1.1 deg -- and Gazebo ground truth agrees with /odom, so this is
-  a real motion limitation, not a reporting artefact. Navigation therefore
-  cannot turn to face a goal.
-* linear.y IS executed: 0.1 m/s for 4 s produced 0.416 m of lateral travel
-  against an ideal 0.400 m (104%) with only 0.5 deg of yaw drift.
+* Yaw is NOT reliably executed. The SAME 0.3 rad/s for 6 s (ideal 103 deg) turned
+  the base 1 deg, then 17 deg, then 99 deg across three runs as the sim's
+  real-time factor (RTF) went 0.85 -> 0.88 -> 1.01. So turning is not a hard
+  limit but an UNREPRODUCIBLE one, and navigation must not depend on it.
+* linear.y IS executed and is the more reliable axis: lateral travel measured
+  82%, 97%, then 118% of the commanded 0.400 m over those same runs. Forward
+  (linear.x) tracked 95-100% consistently. So an off-nose goal is reached by
+  strafing, which always works, rather than by turning.
 
 The limitation belongs to the planar-move stand-in, not to the trot gait: with
 use_planar_move:=true the URDF loads libgazebo_ros_planar_move.so and no joint
 controller runs (there is no gait_controller node at all). That plugin drives the
 model with Model::SetLinearVel + Model::SetAngularVel -- the first is a valid
 rigid translation, the second is not a valid rigid rotation for a 12-joint model,
-so the joints cancel it. Fixing trot_gait.cpp would change nothing while this
-plugin is in the loop.
+so the free legs fight it and the net yaw swings with how the solver integrates
+that fight at the current RTF. Fixing trot_gait.cpp would change nothing while
+this plugin is in the loop.
 
 Before this change navigation picked forward-or-reverse from the sign of the
 body-frame x offset, so a goal lying off the nose was approached by driving into
@@ -96,7 +99,34 @@ class TestNavigationLateral:
         node.nav_lin_gain = 0.5
         node.nav_yaw_gain = 2.0
         node.nav_arrival_m = 0.20
+        node.strafe_gain = 1.0
         return node
+
+    def test_strafe_gain_is_applied_only_at_the_wire(self, adapter):
+        """strafe_gain must scale linear.y but leave the navigation intent
+        (commanded_vy) and forward/yaw untouched.
+
+        The hover stand-in base tracks lateral commands at only ~82%, so the
+        config sets strafe_gain ~= 1.22; this test locks the seam so a future
+        change cannot move the gain into the clearance/escape math or drop it
+        from the published message.
+        """
+        adapter.strafe_gain = 1.22
+        # A pure strafe intent: commanded_vy = 0.10, vx = 0, wz = 0.
+        twist = adapter._build_twist(0.0, 0.10, 0.0)
+        # Published lateral is boosted; intent is unchanged.
+        assert twist.linear.y == pytest.approx(0.122, abs=1e-9)
+        assert twist.linear.x == pytest.approx(0.0, abs=1e-9)
+        assert twist.angular.z == pytest.approx(0.0, abs=1e-9)
+        # Gain of 1.0 must be a pass-through.
+        adapter.strafe_gain = 1.0
+        twist = adapter._build_twist(0.0, 0.10, 0.0)
+        assert twist.linear.y == pytest.approx(0.10, abs=1e-9)
+        # Forward is never scaled, even with a non-unity gain.
+        adapter.strafe_gain = 1.22
+        twist = adapter._build_twist(0.15, 0.0, 0.0)
+        assert twist.linear.x == pytest.approx(0.15, abs=1e-9)
+        assert twist.linear.y == pytest.approx(0.0, abs=1e-9)
 
     def _arm_navigation(self, adapter, pose, goal):
         adapter.mission_phase = "NAVIGATE_TO_ZONE"

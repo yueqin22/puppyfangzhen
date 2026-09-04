@@ -140,5 +140,12 @@ fi
 
 echo
 echo "=== axis sweep (timed against the simulated clock) ==="
-python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py --sweep
+# STRAFE_GAIN (optional) multiplies only the lateral command, to confirm a
+# platform-compensation gain closes the loop (ratio -> ~100%). Default: off.
+if [ -n "${STRAFE_GAIN:-}" ]; then
+  echo "(applying --strafe-gain ${STRAFE_GAIN})"
+  python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py --sweep --strafe-gain "${STRAFE_GAIN}"
+else
+  python3 /mnt/e/puppyfangzhen/tools/probe_strafe.py --sweep
+fi
 echo "MEASURE_DONE"

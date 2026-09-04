@@ -32,15 +32,24 @@ track_cmd_adapter_node:
     vx_positive_deadband: 0.03
     vx_negative_deadband: 0.0
     max_vx: 0.15                     # Conservative safety release default (m/s)
-    # Lateral (body +y) cap, used only while navigating. Yaw is not executed
-    # (103 deg commanded -> 1.1 deg turned) but linear.y is (0.416 m for a
-    # 0.400 m command, 104%), so goals off the nose are reached by strafing
-    # rather than by a turn that never arrives.
+    # Lateral (body +y) cap, used only while navigating. Yaw is not reliably
+    # executed on this stand-in (the same 103-deg command produced 1 deg, 17 deg
+    # then 99 deg across runs as the sim RTF swung 0.85->1.01), but linear.y is
+    # the dependable axis (82-118% of command), so goals off the nose are reached
+    # by strafing rather than by a turn whose magnitude is not reproducible.
     # Cause: with use_planar_move:=true the base is driven by
     # libgazebo_ros_planar_move.so, whose Model::SetLinearVel/SetAngularVel pair
     # expresses translation correctly but rotation incorrectly for a multi-link
     # model. The trot gait is not in the loop at all in this configuration.
     max_vy: 0.15
+    # Lateral command compensation. The hover planar-move base does NOT track a
+    # fixed fraction of a lateral command: across runs it reached 82-118% of the
+    # commanded lateral travel as the sim's real-time factor (RTF) varied
+    # (0.59 -> 118%, 1.01 -> 115%, 0.85 -> 82%). The response is therefore NOT
+    # absolutely calibratable on this stand-in -- leave this at 1.0 (no change)
+    # and do not bake in a gain. A real platform with stable lateral tracking
+    # can set strafe_gain = 1/effort if its effort is reproducible.
+    strafe_gain: 1.0
     # Recovery from a LiDAR block. Stopping dead is not a recovery here: the
     # only escape the old code relied on was rotation, which is not executed,
     # so the base pinned itself against obstacles until the mission aborted
