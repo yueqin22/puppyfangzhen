@@ -6,6 +6,15 @@
 # standing against a wall from the previous run reports a collapsed efficiency
 # that looks exactly like a broken actuator.
 #
+# SOURCE SYNC IS NOT OPTIONAL
+# ---------------------------
+# The Windows tree (/mnt/e/puppyfangzhen) is authoritative; WSL holds a copy
+# that colcon builds. An earlier version of this script built WITHOUT syncing,
+# so after a `git checkout` reverted a URDF change on the Windows side, WSL kept
+# building and measuring the reverted-away version. Every number produced
+# afterwards described a model that no longer existed in the repository. The
+# sync below, plus the post-sync verification, is what stops that recurring.
+#
 # Hard-won cleanup notes:
 #   * pkill -f <name> also matches the invoking shell when the name appears in
 #     its own command line. Use -x (exact process name), or the [f]irst-character
@@ -16,45 +25,93 @@
 #   * colcon lives in ~/.local/bin, which is NOT on a non-login shell's PATH.
 #     Without exporting it the build silently no-ops, the install space keeps the
 #     previous URDF, and the change appears to have no effect.
-#   * An old gzserver holding the port makes the new one exit 255, so the whole
-#     run silently measures a dead world. Kill first, then verify.
+#   * pgrep right after pkill reports a process that is already dying (SIGKILL is
+#     not instantaneous and zombies linger until reaped). Poll instead of a
+#     single sleep, or a healthy run gets aborted for nothing.
 set +u
 export LANG=C
+export PATH="$HOME/.local/bin:$PATH"
 WS="${WS:-$HOME/puppy_ws}"
 WORLD="${WORLD:-small_room}"
-export PATH="$HOME/.local/bin:$PATH"
+SRC="${SRC:-/mnt/e/puppyfangzhen/src}"
 
 for s in /opt/ros/humble/setup.bash "$WS/install/setup.bash"; do
   [[ -f "$s" ]] && source "$s"
 done
-cd "$WS" || exit 2
 
-echo "=== build puppy_description (pick up any URDF change) ==="
-colcon build --packages-select puppy_description 2>&1 | tail -n 3
+# Both the model and the launch that spawns it have to come across: a change to
+# the spawn height lives in puppy_worlds, and building without syncing it would
+# silently measure the old height.
+PKGS="puppy_description puppy_worlds"
+echo "=== sync source (Windows tree is authoritative) ==="
+for p in $PKGS; do
+  rsync -a --delete "$SRC/$p/" "$WS/src/$p/"
+done
+for p in $PKGS; do
+  if ! diff -r "$SRC/$p/" "$WS/src/$p/" >/dev/null 2>&1; then
+    echo "!! $p still differs after rsync -- refusing to build"
+    diff -rq "$SRC/$p/" "$WS/src/$p/" | head
+    exit 5
+  fi
+done
+echo "in sync"
+
+echo "=== build $PKGS ==="
+cd "$WS" || exit 2
+# shellcheck disable=SC2086
+colcon build --packages-select $PKGS 2>&1 | tail -n 3
 source "$WS/install/setup.bash"
 
-echo "=== hard cleanup ==="
-pkill -9 -x gzserver
-pkill -9 -x gzclient
-pkill -9 -x async_slam_toolbox_node
-pkill -9 -f "[s]pawn_entity"
-# SIGKILL is not instantaneous: the process lingers for a moment (and shows up
-# as a zombie until it is reaped). A single fixed sleep reports a false
-# "survived the kill" and aborts a perfectly good run, so poll instead.
-gone=0
-for i in $(seq 1 20); do
-  if ! pgrep -x gzserver >/dev/null 2>&1; then
-    echo "gzserver down after ${i}s"
-    gone=1
-    break
+# Lint before anything expensive. `--` is illegal inside an XML comment, which
+# is easy to write by accident in prose and cost a full 7-minute world restart
+# to discover. Catch it here, in milliseconds.
+#
+# A per-line grep misses a `--` that sits on a DIFFERENT line from the `<!--`
+# opener, and a span-aware grep|sed pipeline produced false positives on clean
+# files. So parse each comment body unambiguously with Python's regex and flag
+# any body that itself contains `--` (the one token xacro refuses to parse).
+bad=0
+shopt -s nullglob
+for f in "$WS/src/puppy_description/urdf"/*.xacro "$WS/src/puppy_worlds/worlds"/*.world; do
+  if python3 - "$f" <<'PY'
+import sys, re
+t = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+sys.exit(1 if any('--' in m.group(1) for m in re.finditer(r'<!--(.*?)-->', t, re.S)) else 0)
+PY
+  then
+    :
+  else
+    echo "!! $f: double hyphen inside an XML comment -- xacro will refuse to parse"
+    bad=1
   fi
+done
+if [ "$bad" -ne 0 ]; then
+  exit 6
+fi
+
+# Validate the URDF BEFORE tearing down the world, so a broken model does not
+# cost a full restart cycle.
+echo "=== joint types the world will actually use ==="
+URDF=$(cd "$WS/src/puppy_description/urdf" && xacro puppy.urdf.xacro use_planar_move:=true 2>&1)
+if [ $? -ne 0 ] || ! echo "$URDF" | grep -q "<robot"; then
+  echo "!! xacro failed -- refusing to restart the world"
+  echo "$URDF" | head -n 12
+  exit 7
+fi
+echo "$URDF" | grep -oE '<joint name="FR_[a-z_]+" type="[a-z]+"' | head -n 4
+
+echo "=== hard cleanup ==="
+pkill -9 -x gzserver; pkill -9 -x gzclient; pkill -9 -x async_slam_toolbox_node
+for i in $(seq 1 20); do
+  pgrep -x gzserver >/dev/null 2>&1 || break
   sleep 1
 done
-if [ "$gone" -ne 1 ]; then
-  echo "!! gzserver survived the kill -- aborting rather than measuring a stale world"
+if pgrep -x gzserver >/dev/null 2>&1; then
+  echo "!! gzserver survived the kill -- refusing to measure a stale world"
   ps -eo pid,ppid,stat,etimes,comm | grep -i gzserver
   exit 4
 fi
+echo "gzserver down"
 
 echo "=== restart ros2 daemon ==="
 ros2 daemon stop >/dev/null 2>&1
@@ -80,10 +137,6 @@ if [ "$ready" -ne 1 ]; then
   tail -n 12 "$WS/world.log"
   exit 3
 fi
-
-echo "=== confirm which URDF the running world uses ==="
-timeout 10 ros2 topic echo --once /robot_description 2>/dev/null \
-  | grep -oE '<joint name="FR_(hip_yaw|hip_pitch|knee)_joint" type="[a-z]+"' | head -n 3
 
 echo
 echo "=== axis sweep (timed against the simulated clock) ==="
