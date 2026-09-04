@@ -46,7 +46,26 @@
     <gazebo reference="base_link">
       <mu1>0.3</mu1>
       <mu2>0.3</mu2>
-      <gravity>true</gravity>
+      <xacro:if value="${use_planar_move}">
+        <!-- Weightless in the stand-in. The planar-move plugin rewrites the
+             model velocity from the last /cmd_vel every 20 ms, including
+             z = 0, so gravity does not make the robot fall; it only drags it
+             down between updates until the feet touch. What happens then is
+             not reproducible: measured on the very same URDF, translation came
+             out at 103% while the robot was still descending from its spawn
+             height, and 26% once it had settled onto the ground. Turning went
+             the other way, 1% in the air and 31% on the ground. So the
+             response depended on how long ago the world was spawned, which
+             makes every absolute velocity figure measured before this change
+             untrustworthy.
+             With gravity off the base hovers wherever it was spawned, touches
+             nothing, and the plugin's commanded velocity is what the robot
+             actually does, consistently. -->
+        <gravity>false</gravity>
+      </xacro:if>
+      <xacro:unless value="${use_planar_move}">
+        <gravity>true</gravity>
+      </xacro:unless>
     </gazebo>
 
     <!-- 禁用所有腿的重力，防止机器人翻倒 -->
