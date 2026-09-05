@@ -32,6 +32,13 @@ Usage (inside WSL, Gazebo running, nothing else publishing /cmd_vel):
 
 --strafe-gain G multiplies only the lateral command by G before sending, to
 verify a platform-compensation gain closes the loop (ratio -> 100% at G = 1/eff).
+--min-rtf F    mark rows below real-time factor F as UNRELIABLE (default 0.95).
+--strict       exit non-zero if any row fell below --min-rtf (for CI gating).
+
+WARNING: this stand-in is NOT absolutely calibratable. Its response is a function
+of the sim real-time factor, so the same command yields different travel as the
+machine load changes (measured: yaw 1 / 17 / 99 deg for an ideal 103 deg at RTF
+0.85 / 0.88 / 1.01). Treat any single run's absolute number as provisional.
 """
 
 import math
@@ -221,6 +228,11 @@ def main():
     rate = 100.0
     sweep = False
     vy_gain = 1.0
+    # Rows below this RTF are marked UNRELIABLE. The platform's response depends
+    # on RTF (see the note printed in the summary), so a slow run is not a noisy
+    # measurement of the same robot -- it is a different, slower robot.
+    min_rtf = 0.95
+    strict = False
     positional = []
     i = 0
     while i < len(args):
@@ -233,6 +245,11 @@ def main():
         elif a == "--strafe-gain":
             i += 1
             vy_gain = float(args[i]) if i < len(args) else vy_gain
+        elif a == "--min-rtf":
+            i += 1
+            min_rtf = float(args[i]) if i < len(args) else min_rtf
+        elif a == "--strict":
+            strict = True
         else:
             positional.append(a)
         i += 1
@@ -262,6 +279,7 @@ def main():
     print()
     print("================ SUMMARY ================")
     print("%-18s %8s %8s %8s %10s" % ("axis", "actual", "ideal", "ratio", "RTF"))
+    unreliable = 0
     for r in results:
         if abs(r["ideal_fwd"]) > 1e-9:
             key, act, ideal = "forward", r["fwd"], r["ideal_fwd"]
@@ -270,13 +288,31 @@ def main():
         else:
             key, act, ideal = "yaw(deg)", r["dyaw"], r["ideal_yaw"]
         ratio = act / ideal if abs(ideal) > 1e-9 else float("nan")
-        print("%-18s %8.3f %8.3f %7.0f%% %10.3f"
-              % (r["label"] + " " + key, act, ideal, 100 * ratio, r["rtf"]))
+        flag = ""
+        if r["rtf"] < min_rtf:
+            flag = "  <-- UNRELIABLE (RTF %.3f < %.2f)" % (r["rtf"], min_rtf)
+            unreliable += 1
+        print("%-18s %8.3f %8.3f %7.0f%% %10.3f%s"
+              % (r["label"] + " " + key, act, ideal, 100 * ratio, r["rtf"], flag))
     print()
-    print("Read the RTF column first: a ratio near 100% at RTF 1.0 means the axis")
-    print("works. A low ratio at low RTF is a measurement artefact, not a defect.")
+    # The old advisory said "a low ratio at low RTF is a measurement artefact".
+    # That is backwards here and it hid a real defect: on this stand-in the
+    # response IS a function of RTF, so the ratio genuinely drops with it.
+    # Measured, same command every time: yaw 1 deg, 17 deg, 99 deg for an ideal
+    # 103 deg as RTF went 0.85 -> 0.88 -> 1.01; lateral 82% -> 97% -> 118%.
+    print("On this stand-in the ratio is a FUNCTION OF RTF, not fixed: lowering RTF")
+    print("genuinely lowers the achieved response. Only rows at RTF >= %.2f can be" % min_rtf)
+    print("compared with each other; a slow run is not 'the same robot measured")
+    print("badly', it is a different, slower robot. Forward stays ~95-100% across")
+    print("the range; lateral and yaw do not, which is why this platform is not")
+    print("absolutely calibratable and navigation must not depend on yaw.")
+    if unreliable:
+        print()
+        print("!! %d of %d rows were below the RTF floor. Do NOT draw conclusions"
+              % (unreliable, len(results)))
+        print("   from them -- re-run on an unloaded machine.")
     rclpy.shutdown()
-    return 0
+    return 2 if (unreliable and strict) else 0
 
 
 if __name__ == "__main__":
