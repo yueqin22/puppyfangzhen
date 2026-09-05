@@ -69,5 +69,5 @@ acceptance:
   max_stall_events: 0
   max_average_localization_error: 0.20
   max_peak_localization_error: 0.75
-  min_required_rooms: 8
+  min_required_rooms: 4        # 与 scene_home.json v6.0 当前 4 房间 (living/kitchen/bedroom/bathroom) 对齐; 旧 7/8 房间阈值需先恢复并锁定对应旧场景, 不得混用
   require_full_round: true

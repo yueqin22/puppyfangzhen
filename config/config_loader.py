@@ -215,10 +215,9 @@ def validate_contract(data):
                 errors.append(
                     "robot.footprint circumscribed radius %.3f < robot.radius %.3f"
                     % (max_r, float(r_radius)))
-            # 闭合性: 起点 == 终点 视为显式闭合 (允许不显式闭合, 这里仅提示)
-            if (pts[0][0] != pts[-1][0]) or (pts[0][1] != pts[-1][1]):
-                warnings.append("robot.footprint is not explicitly closed "
-                                "(last point != first); treated as closed implicitly")
+            # 闭合性: footprint 采用"开放 4 角点"标准表示 (与 C++ test_config_contract
+            # 期望 size()==4 一致)。面积/自交/外接半径校验均按隐式闭合处理, 因此不再对
+            # 未显式闭合发警告 (jihua20260905.md P0-3: 消除 footprint 警告)。
 
     planning = data.get("planning", {}) or {}
     infl = planning.get("inflation_radius")

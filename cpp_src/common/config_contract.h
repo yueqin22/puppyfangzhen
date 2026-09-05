@@ -303,10 +303,9 @@ inline void validate_contract(const Contract& c,
             max_r = std::max(max_r, std::sqrt(p.x * p.x + p.y * p.y));
         if (r.radius > 0 && max_r < r.radius - 1e-6)
             errors.push_back("robot.footprint circumscribed radius < robot.radius");
-        if (!r.footprint.empty() &&
-            (r.footprint[0].x != r.footprint.back().x ||
-             r.footprint[0].y != r.footprint.back().y))
-            warnings.push_back("robot.footprint is not explicitly closed");
+        // footprint 采用开放 4 角点标准表示 (与 footprint.size()==4 期望一致);
+        // 面积/自交/外接半径校验均已按隐式闭合处理, 不再对未显式闭合发警告
+        // (jihua20260905.md P0-3)。
     }
 
     if (c.planning.inflation_radius > 0 && r.radius > 0 && r.safety_margin > 0) {

@@ -62,6 +62,8 @@ def main(argv=None):
         "contract_warnings": [],
         "radius_consistency": {},
         "radius_mismatches": [],
+        "scene_consistency": {},
+        "scene_error": None,
         "cross_config_pass": True,
         "checked_files": [],
     }
@@ -121,9 +123,39 @@ def main(argv=None):
             _dump(report, args.report)
             return 2
 
+        # 3. scene_home.json 与契约 robot.radius 一致 (P0-3 单一真源:
+        #    scene 的规划/CBF 半径不得私自漂移出契约声明的安全基线)
+        scene_path = os.path.join(args.config_dir, "scene_home.json")
+        if os.path.exists(scene_path):
+            try:
+                with open(scene_path, encoding="utf-8") as sf:
+                    scene = json.load(sf)
+                srad = scene.get("robot", {}) or {}
+                for key in ("radius_planning", "radius_cbf"):
+                    v = srad.get(key)
+                    if isinstance(v, (int, float)):
+                        scene_consistency = report.setdefault("scene_consistency", {})
+                        scene_consistency[key] = v
+                        report["checked_files"].append("scene_home.json:%s" % key)
+                        if snap_r is not None and abs(float(v) - snap_r) > 1e-9:
+                            mism.append({"file": "scene_home.json:%s" % key,
+                                          "radius": float(v),
+                                          "contract_radius": snap_r})
+            except Exception as e:  # noqa: BLE001
+                report["scene_error"] = "load scene_home.json failed: %s" % e
+
+        report["radius_mismatches"] = mism
+        if mism:
+            report["cross_config_pass"] = False
+            report["status"] = "FAIL"
+            report["exit_code"] = 2
+            report["summary"] = "robot.radius 跨配置/场景不一致: %d 处" % len(mism)
+            _dump(report, args.report)
+            return 2
+
         report["status"] = "PASS"
         report["exit_code"] = 0
-        report["summary"] = "契约合法, %d 个配置文件 robot.radius 一致 (%.3f)" % (
+        report["summary"] = "契约合法, %d 个配置/场景 robot.radius 一致 (%.3f)" % (
             len(report["checked_files"]), snap_r if snap_r is not None else 0.0)
         _dump(report, args.report)
         return 0

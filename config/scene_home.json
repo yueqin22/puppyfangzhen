@@ -23,8 +23,8 @@
     "dyn_collision_radius": 0.45
   },
   "robot": {
-    "radius_planning": 0.30,
-    "radius_cbf": 0.30,
+    "radius_planning": 0.35,
+    "radius_cbf": 0.35,
     "cbf_d_safe": 0.3,
     "cbf_d_critical": 0.08,
     "cbf_alpha": 2.0,
