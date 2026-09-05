@@ -61,6 +61,34 @@ def _git_describe():
         return "unavailable"
 
 
+def _pytest_python():
+    """找到装了 pytest 的解释器, 避免 `python` 指向无 pytest 的运行时导致基线
+    pytest 误记 exit=1 / null。优先 sys.executable, 其次 PATH 上的 python3/python,
+    再回退到本机已知装有项目 dev 依赖的系统 Python (jihua20260905.md P0-1 可复现性)。"""
+    import shutil
+    candidates = [sys.executable, "python3", "python"]
+    for cand in ("C:/Program Files/Python312/python.exe",
+                "C:/Program Files/Python312/pythonw.exe"):
+        if os.path.exists(cand) and cand not in candidates:
+            candidates.append(cand)
+    seen = set()
+    for c in candidates:
+        if c in seen:
+            continue
+        seen.add(c)
+        exe = shutil.which(c) if c in ("python3", "python") else c
+        if not exe:
+            continue
+        try:
+            r = subprocess.run([exe, "-m", "pytest", "--version"],
+                               capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                return exe
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
 def _run(cmd, cwd):
     """返回 (returncode, stdout_text)。失败不抛异常, 留给调用方记录。"""
     try:
@@ -147,43 +175,60 @@ def main(argv=None):
     # ROS2 适配器套件 src/puppy_minicpm_robot/test (即计划 §2.2 的 76/1)。
     suite_dir = os.path.join(_ROOT, "src", "puppy_minicpm_robot")
     os.environ["PYTHONPATH"] = suite_dir + os.pathsep + os.environ.get("PYTHONPATH", "")
-    # 优先用 pytest-json-report 插件; 不可用时回退到解析 -q 摘要行。
-    rc_t, out_t = _run(
-        [sys.executable, "-m", "pytest", "test", "-q", "--no-header",
-         "-p", "no:cacheprovider",
-         "--json-report", "--json-report-file",
-         os.path.join(out_dir, "python_pytest.json")],
-        cwd=suite_dir)
-    if rc_t != 0 or not os.path.exists(os.path.join(out_dir, "python_pytest.json")):
-        rc_t, out_t = _run(
-            [sys.executable, "-m", "pytest", "test", "-q", "--no-header",
-             "-p", "no:cacheprovider"],
-            cwd=suite_dir)
-        import re
-        m = re.search(
-            r"(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?"
-            r"(?:,\s*(\d+)\s+failed)?", out_t)
-        passed = int(m.group(1)) if m else None
-        skipped = int(m.group(2)) if (m and m.group(2)) else 0
-        failed = int(m.group(3)) if (m and m.group(3)) else 0
+    json_path = os.path.join(out_dir, "python_pytest.json")
+    pytest_py = _pytest_python()
+    if pytest_py is None:
+        # 诚实失败: 不假装测试通过, 也不写混乱数字。明确告知需要装有 dev 依赖的解释器。
         rep = {
             "summary": {
-                "passed": passed, "skipped": skipped, "failed": failed,
-                "exit_code": rc_t,
+                "passed": None, "skipped": 0, "failed": 0,
+                "exit_code": 127, "blocked": True,
+                "reason": "pytest 未安装在任何可用解释器中; 请用装有项目 dev 依赖的 Python "
+                          "(如系统 Python 3.12) 运行 make_baseline.py",
             },
-            "raw_tail": out_t[-2000:],
+            "raw_tail": "",
         }
-        with open(os.path.join(out_dir, "python_pytest.json"), "w", encoding="utf-8") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(rep, f, indent=2, ensure_ascii=False)
-        # 同时保留纯文本便于人工查看
-        with open(os.path.join(out_dir, "python_pytest.txt"), "w", encoding="utf-8") as f:
-            f.write(out_t)
+        rc_t = 127
+    else:
+        # 优先用 pytest-json-report 插件; 不可用时回退到解析 -q 摘要行。
+        rc_t, out_t = _run(
+            [pytest_py, "-m", "pytest", "test", "-q", "--no-header",
+             "-p", "no:cacheprovider",
+             "--json-report", "--json-report-file", json_path],
+            cwd=suite_dir)
+        if rc_t != 0 or not os.path.exists(json_path):
+            rc_t, out_t = _run(
+                [pytest_py, "-m", "pytest", "test", "-q", "--no-header",
+                 "-p", "no:cacheprovider"],
+                cwd=suite_dir)
+            import re
+            m = re.search(
+                r"(\d+)\s+passed(?:,\s*(\d+)\s+skipped)?"
+                r"(?:,\s*(\d+)\s+failed)?", out_t)
+            passed = int(m.group(1)) if m else None
+            skipped = int(m.group(2)) if (m and m.group(2)) else 0
+            failed = int(m.group(3)) if (m and m.group(3)) else 0
+            rep = {
+                "summary": {
+                    "passed": passed, "skipped": skipped, "failed": failed,
+                    "exit_code": rc_t,
+                },
+                "raw_tail": out_t[-2000:],
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(rep, f, indent=2, ensure_ascii=False)
+            # 同时保留纯文本便于人工查看
+            with open(os.path.join(out_dir, "python_pytest.txt"), "w", encoding="utf-8") as f:
+                f.write(out_t)
 
     # ---- metadata.json ----
     meta = {
         "baseline_id": args.id,
         "generated_utc": now,
         "git_sha": env["git"]["sha"],
+        "pytest_interpreter": pytest_py,
         "commands": {
             "config_consistency": "python scripts/check_config_consistency.py",
             "scene_validation": "python scripts/validate_scene.py",
