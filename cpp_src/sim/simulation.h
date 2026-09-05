@@ -233,6 +233,7 @@ public:
     int persistent_plan_failures_ = 0;   // §25.7 方案B: 仅计"持续(卡死)规划失败"(plan失败且机器人卡死)
     bool in_persistent_plan_fail_ = false; // 同一卡死片段仅计一次, 避免每帧重复计数
     int rounds_completed = 0;
+    int goals_reached = 0;                  // P0-2: 正常到达目标计数 (不含跳过的不可达目标)
     std::string current_action = "cruise";
 
     // v3.2.3: 真实性指标（防止"车不动假稳定"）
@@ -517,7 +518,7 @@ public:
         frame = 0;
         total_collisions = near_miss = near_miss_frames = 0;
         near_miss_active = false;
-        skip_count = stall_events = rounds_completed = 0;
+        skip_count = stall_events = rounds_completed = goals_reached = 0;
         frames_on_target = 0;
         current_path.clear();
         path_replan_counter = 0;
@@ -804,6 +805,7 @@ public:
                 // v3.2.15d: 正常到达目标，从不可达集合中移除（目标可达）
                 unreachable_targets_.erase(target_idx);
                 target_idx = (target_idx + 1) % patrol_targets.size();
+                goals_reached++;  // P0-2: 正常到达一个目标即计一次
             }
             frames_on_target = 0;
             if (target_idx == 0) {

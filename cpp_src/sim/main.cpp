@@ -81,6 +81,7 @@ static void print_help() {
     printf("  --timing-csv <path> write per-frame compute time (ms) CSV for P99 analysis\n");
     printf("  --config <path>     YAML config file (default: config/sim_cpp.yaml)\n");
     printf("  --long-run          REQUIRED for frames > 36000 (explicit long sim)\n");
+    printf("  --level <smoke|integration|regression|release>  acceptance level (default: derived from frames)\n");
     printf("  --dry-run           load config and print, do not simulate\n");
     printf("  --help, -h          show this help\n");
     printf("  --version           show version\n");
@@ -108,7 +109,10 @@ int main(int argc, char* argv[]) {
     bool dry_run = false;
     bool want_help = false;
     bool want_version = false;
-    bool acceptance_full = false;  // 长跑/长稳才启用重验收 (房间/轮次), 短跑仅做安全冒烟
+    bool acceptance_full = false;  // 向后兼容: --acceptance 等价于 --level regression
+    enum class AccLevel { SMOKE, INTEGRATION, REGRESSION, RELEASE };
+    AccLevel level = AccLevel::SMOKE;
+    std::string level_arg;         // --level 显式指定
     bool used_positional = false;
     std::string report_path;
     std::string timing_csv;       // v3.2.18p: 每帧耗时 CSV (用于 P99 长稳分析)
@@ -135,6 +139,8 @@ int main(int argc, char* argv[]) {
             dry_run = true;
         } else if (a == "--acceptance") {
             acceptance_full = true;
+        } else if (a == "--level" && i + 1 < argc) {
+            level_arg = argv[++i];
         } else if (a == "--help" || a == "-h") {
             want_help = true;
         } else if (a == "--version") {
@@ -168,9 +174,30 @@ int main(int argc, char* argv[]) {
                 num_frames);
         return 5;
     }
-    // 重验收 (房间/轮次/距离) 仅在长跑或显式 --acceptance 时门控退出码;
-    // 短跑(默认 300 帧)只做安全冒烟, 质量指标仍写入报告但不阻断.
-    if (num_frames >= 3600 || long_run) acceptance_full = true;
+    // P0-2: 验收级别 (jihua20260905.md §4 P0-2). 显式 --level 优先; 否则按帧数推导,
+    // 与计划分层一致: SMOKE(300) / INTEGRATION(3600) / REGRESSION(36000) / RELEASE(>36000).
+    // 旧 --acceptance 语义等价于 REGRESSION (房间全覆盖门控).
+    if (!level_arg.empty()) {
+        if (level_arg == "smoke") level = AccLevel::SMOKE;
+        else if (level_arg == "integration") level = AccLevel::INTEGRATION;
+        else if (level_arg == "regression") level = AccLevel::REGRESSION;
+        else if (level_arg == "release") level = AccLevel::RELEASE;
+        else { fprintf(stderr, "[FATAL] unknown --level: %s (smoke|integration|regression|release)\n", level_arg.c_str()); return 5; }
+    } else if (acceptance_full) {
+        level = AccLevel::REGRESSION;
+    } else if (num_frames > 36000) {
+        level = AccLevel::RELEASE;
+    } else if (num_frames >= 36000) {
+        level = AccLevel::REGRESSION;
+    } else if (num_frames >= 3600) {
+        level = AccLevel::INTEGRATION;
+    } else {
+        level = AccLevel::SMOKE;
+    }
+    const char* level_name =
+        (level == AccLevel::SMOKE) ? "smoke" :
+        (level == AccLevel::INTEGRATION) ? "integration" :
+        (level == AccLevel::REGRESSION) ? "regression" : "release";
     if (num_frames <= 0) {
         fprintf(stderr, "[FATAL] invalid frame count: %d\n", num_frames);
         return 5;
@@ -377,31 +404,63 @@ int main(int argc, char* argv[]) {
 
     // ---- 验收判定 (机器可解析, 写入 JSON) ----
     bool real_move = sim.total_distance >= 10.0;
-    bool room_cover = sim.rooms_visited.size() >= 3;
+    bool can_move = sim.total_distance > 0.0;
+    bool goal_reached = sim.goals_reached >= 1;   // P0-2: INTEGRATION 至少 1 个目标到达
+    // P0-2: 房间覆盖阈值按级别 (v6.0 四房间; INTEGRATION 至少 3, REGRESSION/RELEASE 全覆盖 4)
+    int min_rooms = (level == AccLevel::INTEGRATION) ? 3
+                  : (level == AccLevel::REGRESSION || level == AccLevel::RELEASE) ? 4 : 0;
+    bool room_cover = (min_rooms == 0) || (sim.rooms_visited.size() >= (size_t)min_rooms);
     double avg_err = (sim.amcl_err_samples_ > 0) ? sim.amcl_err_sum_ / sim.amcl_err_samples_ : 0.0;
     bool localization_ok = !sim.use_amcl_ || (avg_err < 0.20 && sim.amcl_err_max_ < 0.75);
     bool planning_ok = sim.persistent_plan_failures_ == 0;  // §25.7 方案B: 仅计持续(卡死)失败
     bool speed_ok = avg_speed > 0.02;
     bool stuck_ok = stuck_ratio < 20.0;
-    bool heavy_ok = real_move && room_cover && speed_ok && stuck_ok && planning_ok;
+    double astar_rate = sim.nav_core_.astar_calls > 0
+        ? 100.0 * sim.nav_core_.astar_path_found / sim.nav_core_.astar_calls : 0.0;
+    bool astar_ok = astar_rate >= 95.0;            // REGRESSION/RELEASE
+    bool round_ok = sim.rounds_completed >= 1;     // RELEASE: 至少一个完整巡逻圈
 
-    printf("\n  验收级别: %s\n", acceptance_full ? "FULL (房间/轮次门控)" : "SMOKE (仅安全冒烟门控)");
+    // 各指标是否在本级别门控退出码 (安全关键项所有级别门控)
+    bool g_distance = (level != AccLevel::SMOKE);
+    bool g_rooms = (level != AccLevel::SMOKE);
+    bool g_speed = (level != AccLevel::SMOKE);
+    bool g_stuck = (level != AccLevel::SMOKE);
+    bool g_astar = (level == AccLevel::REGRESSION || level == AccLevel::RELEASE);
+    bool g_round = (level == AccLevel::RELEASE);
+
+    bool quality_ok =
+        (level == AccLevel::SMOKE)
+            ? (can_move && sim.nav_core_.astar_calls > 0)                 // 能运动 + A* 可调用
+            : (level == AccLevel::INTEGRATION)
+              ? (real_move && goal_reached && room_cover && speed_ok && stuck_ok)
+                : (level == AccLevel::REGRESSION)
+                ? (real_move && room_cover && speed_ok && stuck_ok && astar_ok)
+                : (real_move && room_cover && speed_ok && stuck_ok && astar_ok && round_ok);  // RELEASE
+    bool heavy_ok = quality_ok;
+
+    printf("\n  验收级别: %s (rooms>=%d 门控)\n", level_name, min_rooms);
     printf("  验证标准:\n");
     printf("    collision_count == 0: %s\n", sim.total_collisions == 0 ? "PASS" : "FAIL");
     printf("    wall_penetration == 0: PASS\n");
     printf("    process_alive == true: PASS\n");
     printf("    total_distance >= 10m: %s (%.1fm)%s\n", real_move ? "PASS" : "FAIL", sim.total_distance,
-           acceptance_full ? "" : "  [报告]");
-    printf("    rooms_visited >= 3: %s (%zu)%s\n", room_cover ? "PASS" : "FAIL", sim.rooms_visited.size(),
-           acceptance_full ? "" : "  [报告]");
+           g_distance ? "  [门控]" : "  [报告]");
+    printf("    rooms_visited >= %d: %s (%zu)%s\n", min_rooms, room_cover ? "PASS" : "FAIL", sim.rooms_visited.size(),
+           g_rooms ? "  [门控]" : "  [报告]");
+    printf("    goals_reached >= 1: %s (%d)%s\n", goal_reached ? "PASS" : "FAIL", sim.goals_reached,
+           (level == AccLevel::INTEGRATION) ? "  [门控]" : "  [报告]");
     printf("    avg_speed > 0.02: %s (%.3f)%s\n", speed_ok ? "PASS" : "FAIL", avg_speed,
-           acceptance_full ? "" : "  [报告]");
+           g_speed ? "  [门控]" : "  [报告]");
     printf("    stuck_ratio < 20%%: %s (%.1f%%)%s\n", stuck_ok ? "PASS" : "FAIL", stuck_ratio,
-           acceptance_full ? "" : "  [报告]");
-    printf("    avg_err < 0.20m and max_err < 0.75m: %s (avg=%.3f max=%.3f)\n",
-           localization_ok ? "PASS" : "FAIL", avg_err, sim.amcl_err_max_);
-    printf("    no unsafe planning fallback (persistent): %s (%d)  [raw transient=%d]\n",
-           planning_ok ? "PASS" : "FAIL", sim.persistent_plan_failures_, sim.nav_core_.planning_failures);
+           g_stuck ? "  [门控]" : "  [报告]");
+    printf("    avg_err < 0.20m and max_err < 0.75m: %s (avg=%.3f max=%.3f)%s\n",
+           localization_ok ? "PASS" : "FAIL", avg_err, sim.amcl_err_max_, "[门控]");
+    printf("    astar_rate >= 95%%: %s (%.1f)%s\n", astar_ok ? "PASS" : "FAIL", astar_rate,
+           g_astar ? "  [门控]" : "  [报告]");
+    printf("    no unsafe planning fallback (persistent): %s (%d)  [raw transient=%d]%s\n",
+           planning_ok ? "PASS" : "FAIL", sim.persistent_plan_failures_, sim.nav_core_.planning_failures, "[门控]");
+    printf("    full patrol round >= 1: %s (%d)%s\n", round_ok ? "PASS" : "FAIL", sim.rounds_completed,
+           g_round ? "  [门控]" : "  [报告]");
 
     // ---- 退出码映射 (jihua20260818 §7.3) ----
     // 安全关键项 (P0) 始终门控: 超时/碰撞/定位发散/不安全规划.
@@ -414,7 +473,7 @@ int main(int argc, char* argv[]) {
         exit_code = 2; reason = "COLLISION";
     } else if (!localization_ok) {
         exit_code = 3; reason = "LOC_FAIL";
-    } else if (acceptance_full && !heavy_ok) {
+    } else if (!heavy_ok) {
         exit_code = 1;
         reason = "REQUIRED_FAIL";
     } else {
@@ -449,7 +508,8 @@ int main(int argc, char* argv[]) {
             "  \"exit_code\": " + std::to_string(exit_code) + ",\n"
             "  \"reason\": \"" + reason + "\",\n"
             "  \"timeout\": " + (timed_out ? "true" : "false") + ",\n"
-            "  \"acceptance_level\": \"" + std::string(acceptance_full ? "full" : "smoke") + "\",\n"
+            "  \"acceptance_level\": \"" + std::string(level_name) + "\",\n"
+            "  \"min_required_rooms\": " + std::to_string(min_rooms) + ",\n"
             "  \"seed\": " + std::to_string(params.seed) + ",\n"
             "  \"frames\": " + std::to_string(num_frames) + ",\n"
             "  \"config_path\": \"" + json_escape(effective_path) + "\",\n"
@@ -463,6 +523,7 @@ int main(int argc, char* argv[]) {
             "    \"skip_count\": " + std::to_string(sim.skip_count) + ",\n"
             "    \"stall_events\": " + std::to_string(sim.stall_events) + ",\n"
             "    \"rounds_completed\": " + std::to_string(sim.rounds_completed) + ",\n"
+            "    \"goals_reached\": " + std::to_string(sim.goals_reached) + ",\n"
             "    \"total_distance_m\": " + std::to_string((int)(sim.total_distance)) + ",\n"
             "    \"rooms_visited\": " + std::to_string(sim.rooms_visited.size()) + ",\n"
             "    \"avg_speed\": " + std::to_string(avg_speed) + ",\n"
