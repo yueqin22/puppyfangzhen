@@ -30,3 +30,23 @@ class TestBenchmarkSuite:
         assert "narrow_corridor" in data["scenarios"]
         assert "dynamic_obstacle" in data["scenarios"]
         assert "target_occlusion" in data["scenarios"]
+
+    def test_suite_is_not_vacuously_gated(self):
+        """The suite must run with the adapter allowed to move at all.
+
+        Rationale: with mission_phase unset the adapter's phase gating zeroes every
+        command. Scenarios 1-3 then fail for a reason unrelated to what they
+        measure, and scenario 4 -- which asserts vx == wz == 0 -- PASSES however
+        broken the occlusion handling is. That state hid for months and meant the
+        suite carried zero regression signal. If someone drops the phase
+        assignment, fail here with a message that names the cause instead of
+        letting four scenarios go quietly meaningless again.
+        """
+        runner = BenchmarkRunner(num_trials_per_scenario=1)
+        assert runner.adapter.gate_by_mission_phase is True
+        assert runner.adapter.mission_phase in runner.adapter.tracking_phases, (
+            "benchmark_adapter.mission_phase=%r is not a tracking phase %r -- "
+            "every command is gated to zero, so scenarios 1-3 fail spuriously and "
+            "scenario 4 passes vacuously"
+            % (runner.adapter.mission_phase, list(runner.adapter.tracking_phases))
+        )

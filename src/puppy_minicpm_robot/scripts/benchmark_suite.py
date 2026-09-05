@@ -39,6 +39,17 @@ class BenchmarkRunner:
         self.engine = MockInferenceEngine()
         self.results = {}
 
+        # MANDATORY: put the adapter in the tracking phase. This suite predates
+        # the mission-phase gating (gate_by_mission_phase, added 2026-09-01) and
+        # never set mission_phase, so the adapter gated EVERY command to zero
+        # (a None phase is treated as "not tracking"). That made scenarios 1-3
+        # fail for a reason unrelated to what they measure, and worse, made
+        # scenario 4 PASS VACUOUSLY: it asserts vx == wz == 0, which gating
+        # guarantees no matter how bad the occlusion handling is. A suite whose
+        # results are decided by the gate rather than by the logic under test
+        # gives zero regression signal, so set the phase before any trial runs.
+        self.adapter.mission_phase = "VISUAL_TRACKING"
+
     def run_open_area_scenario(self) -> Dict[str, Any]:
         """Scenario 1: Open area following with high target visibility."""
         latencies = []
