@@ -210,6 +210,27 @@ bash scripts/clean_artifacts.sh --apply
 
 更详细的迁移顺序见 `docs/cpp_migration_plan.md`。
 
+## 运行 Profile 与验收门禁 (jihua20260905.md §11 / §12)
+
+`config/unified_params.yaml` 顶部 `profile:` 选择激活档, `profiles:` 定义四套语义
+(单一真源: 阈值一律来自 `simulation_contract.yaml` / `motion_capability.yaml`, 不在此重复写死):
+
+| profile | 用途 | 验收级别 | 默认帧数 | 后端 | 强制单一真源 |
+|---|---|---|---|---|---|
+| `dev` | 本地开发冒烟 | SMOKE | 300 | cpp_nav_core | 否 |
+| `research` | 消融/论文多种子 | REGRESSION | 36000 | cpp_nav_core | 否 |
+| `release` | 发布验收(严格, 不可静默回退) | RELEASE | 108000 | cpp_nav_core | **是** |
+| `demo` | 答辩/视频(稳定优先) | INTEGRATION | 9000 | ue_bridge | 否 |
+
+- 切换档: 改 `config/unified_params.yaml` 顶部 `profile:` 字段。
+- 校验激活档合法: `python scripts/check_profile.py` (非法退出非零)。
+- 发布门禁: `python scripts/check_profile.py --assert-release` 仅 `release` 且
+  `enforce_single_source=true` 时通过。
+- 文档一致性(§13 风险#8): `python scripts/check_docs_consistency.py` 扫描旧房间数/旧半径/Jazzy 混写。
+- 一键发布报告(§9.3): `python scripts/gen_release_report.py --run-id <id>` 聚合
+  `artifacts/cpp_*_seedN_planB.json` → `artifacts/<id>/` (summary.md + plots/)。
+- 全量回归: `bash scripts/run_regression.sh` (已接入上述门禁, 15/15 ALL GREEN)。
+
 ## 常见问题
 
 ### Q: Gazebo 打不开 / GUI 不显示？
