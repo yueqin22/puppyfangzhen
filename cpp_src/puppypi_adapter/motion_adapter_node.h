@@ -54,7 +54,7 @@ private:
     // ===== 参数 =====
     bool use_sim_{true};
     double max_linear_x_{0.3};
-    double max_linear_y_{0.0};
+    double max_linear_y_{0.3};
     double max_angular_z_{1.2};
     double cmd_timeout_{1.0};
     double accel_limit_{2.0};
@@ -68,7 +68,11 @@ private:
     std::string gait_mode_{"idle"};
 
     // ===== 平滑后的速度 =====
+    // P0-3: vy 与 vx 同等对待。此前只有 vx/wz, linear.y 在整条链路上被丢弃,
+    // 而平台实测横移可兑现 82%~118% (config/motion_capability.yaml),
+    // 导航的受阻切向脱困正依赖它。
     double current_vx_{0.0};
+    double current_vy_{0.0};
     double current_wz_{0.0};
 
     // ===== 上次命令时间 =====

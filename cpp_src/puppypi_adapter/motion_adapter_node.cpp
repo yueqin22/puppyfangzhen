@@ -27,7 +27,7 @@ MotionAdapterNode::MotionAdapterNode()
     // 参数声明
     this->declare_parameter("use_sim", true);
     this->declare_parameter("max_linear_x", 0.3);
-    this->declare_parameter("max_linear_y", 0.0);
+    this->declare_parameter("max_linear_y", 0.3);
     this->declare_parameter("max_angular_z", 1.2);
     this->declare_parameter("cmd_timeout", 1.0);
     this->declare_parameter("accel_limit", 2.0);
@@ -87,6 +87,7 @@ void MotionAdapterNode::onCmdVel(
 
     // 速度限制 (gaijin2.md 7.3)
     double target_vx = std::clamp(msg->linear.x, -max_linear_x_, max_linear_x_);
+    double target_vy = std::clamp(msg->linear.y, -max_linear_y_, max_linear_y_);
     double target_wz = std::clamp(msg->angular.z, -max_angular_z_, max_angular_z_);
 
     // 平滑加速度
@@ -94,20 +95,28 @@ void MotionAdapterNode::onCmdVel(
     const double max_dv = accel_limit_ * dt;
     const double max_dw = yaw_rate_limit_ * dt;
     current_vx_ = std::clamp(target_vx, current_vx_ - max_dv, current_vx_ + max_dv);
+    current_vy_ = std::clamp(target_vy, current_vy_ - max_dv, current_vy_ + max_dv);
     current_wz_ = std::clamp(target_wz, current_wz_ - max_dw, current_wz_ + max_dw);
 
     // 死区
     if (std::abs(current_vx_) < 0.01) {
         current_vx_ = 0.0;
     }
+    if (std::abs(current_vy_) < 0.01) {
+        current_vy_ = 0.0;
+    }
     if (std::abs(current_wz_) < 0.05) {
         current_wz_ = 0.0;
     }
 
     // P0-3: 仿真模式只记录速度；真机模式发送到 SDK
-    // TODO: 真机模式 self.puppypi.set_velocity(current_vx_, 0, current_wz_)
+    // TODO: 真机模式 puppypi_.set_velocity(current_vx_, current_vy_, current_wz_)
+    // 注意: 不要把 vy 写成 0。写死 0 会让"导航发出横移、底盘毫无反应"这种
+    // 静默失效无法被发现; 上限已由 max_linear_y_ 约束 (契约单一真源)。
 
-    moving_ = (std::abs(current_vx_) > 0.01) || (std::abs(current_wz_) > 0.05);
+    moving_ = (std::abs(current_vx_) > 0.01) ||
+              (std::abs(current_vy_) > 0.01) ||
+              (std::abs(current_wz_) > 0.05);
     if (moving_) {
         platform_state_ = MotionState::EXECUTING;
     }
@@ -118,7 +127,10 @@ void MotionAdapterNode::updateState() {
     rclcpp::Time now = this->now();
     double elapsed = (now - last_cmd_time_).seconds();
     if (controllable_ && standing_ && elapsed > cmd_timeout_) {
+        // P0-4: 命令超时 -> 三轴全部归零。漏掉 vy 会留下"超时后仍在横移"的
+        // 安全缺口。
         current_vx_ = 0.0;
+        current_vy_ = 0.0;
         current_wz_ = 0.0;
         if (platform_state_ == MotionState::EXECUTING) {
             platform_state_ = MotionState::READY;
@@ -157,7 +169,9 @@ void MotionAdapterNode::publishState() {
     msg.controllable = controllable_;
     msg.gait_mode = gait_mode_;
     msg.linear_x = current_vx_;
-    msg.linear_y = 0.0;
+    // 上报真实横移速度。写死 0.0 会让监控永远看到"没有横移", 脱困是否生效
+    // 无从判断。
+    msg.linear_y = current_vy_;
     msg.angular_z = current_wz_;
     msg.platform_state = stateName(platform_state_);
     state_pub_->publish(msg);

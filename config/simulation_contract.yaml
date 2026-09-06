@@ -65,7 +65,12 @@ adapter:
   allow_backend_fallback: false
   cmd_vel_timeout_sec: 1.0    # cmd_vel 静默超时 -> 自动发布零速度
   max_linear_x: 0.3
-  max_linear_y: 0.0
+  # P0-3: 曾为 0.0, 而 Python/C++ motion_adapter 的 clamp 与 navigation 的
+  # 受阻切向横移脱困都依赖 vy —— 结果是"导航发出横移、底盘毫无反应"的静默失效。
+  # 平台实测横移可兑现 82%~118% (详见 config/motion_capability.yaml),
+  # 因此这里给出与前进对称的**命令上限**。注意: 这是命令夹限, 不是标定能力;
+  # 实际兑现比例由 motion_capability.yaml 描述, 两者不要混用。
+  max_linear_y: 0.3
   max_angular_z: 1.2
 
 simulation:

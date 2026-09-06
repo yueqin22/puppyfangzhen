@@ -1,0 +1,233 @@
+# motion_capability.yaml — vx / vy / wz 轴响应能力表 (单一真源)
+# =====================================================================
+# 依据 jihua20260905.md:
+#   §4 P0-3 第 4 条  "为 vx/vy/wz 建立运动能力表"
+#   §7.4            "不把墙边、模型自回波、旧世界残留和低 RTF 测量当成执行器缺陷;
+#                    为 vx/vy/wz 分别设置'已标定/待标定'状态"
+#   §12 验收         "运动真实性: 1 小时 >=10m, stuck <20%"
+#
+# 这份表回答一个问题: **导航可以指望哪个轴**。
+# 它不描述"机器人应该多快", 只描述"下发的命令实际兑现了多少"。
+#
+# 状态语义 (三个值, 不允许含糊):
+#   calibrated    实测比例稳定、与 RTF 无关 -> 可用于定位级运动
+#   derated       能兑现但比例随 RTF 摆动 -> 可用于位移/脱困, 不可用于精确到位
+#   uncalibrated  实测比例跨度过大/不可复现 -> 导航**不得**把它当可靠能力
+#
+# 所有数值来自常驻全量录制 (不是稀疏 echo —— 稀疏采样曾经给出完全错误的结论):
+#   tools/probe_cmdvel_lateral.py --min-rtf ... --strict
+#   tools/probe_strafe.py
+#   scripts/_measure_axes.sh        (WSL/Gazebo, 仿真时间计时)
+#
+# 书写约束: 本文件由 config/config_loader.py 的迷你 YAML 解析器读取,
+# 只支持块式映射/序列, 不支持行内 {a: 1, b: 2}。下面的 measured_ratio 一律写成
+# 块式嵌套, 否则会被静默解析成字符串, 校验脚本拿到的是 'x' 而不是数字。
+
+schema_version: 1
+recorded: 2026-09-06
+recorded_at_commit: c320e24
+
+# 当前生效的能力 profile。切换平台必须改这里, 而不是改各处的限速常量。
+active_profile: gazebo_standin_planar_move
+
+profiles:
+
+  # -------------------------------------------------------------------
+  # 1) 当前毕业设计仿真基线: Gazebo + planar_move 插件 stand-in
+  #    (gait_controller 不启动, 见 use_planar_move:=true)
+  # -------------------------------------------------------------------
+  gazebo_standin_planar_move:
+    description: >-
+      Gazebo planar_move 插件 stand-in。响应强 RTF 相关、run-to-run 不可复现。
+      绝对速度不可标定, 导航只依赖"能兑现且方向正确"的轴, 不依赖角度闭环。
+
+    axes:
+
+      vx:
+        status: calibrated
+        rtf_dependent: false
+        measured_ratio:
+          min: 0.95
+          max: 1.00
+        usable_for:
+          - translation
+          - positioning
+          - distance_metrics
+        not_usable_for: []
+        evidence: >-
+          前进稳定在 95~100%, 多次测量一致, 不随 RTF 摆动。
+          是本项目唯一可用于定位级运动的轴。
+        evidence_tools:
+          - tools/probe_cmdvel_lateral.py
+          - scripts/_measure_axes.sh
+
+      vy:
+        status: derated
+        rtf_dependent: true
+        measured_ratio:
+          min: 0.82
+          max: 1.18
+        usable_for:
+          - translation
+          - obstacle_escape
+        not_usable_for:
+          - precise_positioning
+        evidence: >-
+          横移实测 82% / 97% / 118%, 跨度 36 个百分点, 与 RTF 同向变化。
+          方向正确、幅度不准, 所以能用来横向脱困和走近目标, 但不能用来
+          精确横移 N 米到位。adapter 的 strafe_gain 默认 1.0 即为此故:
+          平台本身的横向响应就不可标定, 补一个固定增益只会把误差挪个位置。
+        evidence_tools:
+          - tools/probe_cmdvel_lateral.py
+          - tools/probe_strafe.py
+
+      wz:
+        status: uncalibrated
+        rtf_dependent: true
+        measured_ratio:
+          min: 0.01
+          max: 0.96
+        usable_for: []
+        not_usable_for:
+          - heading_control
+          - turning_in_place
+          - positioning
+        evidence: >-
+          同一条指令 0.3 rad/s 持续 6s (理想 103 度) 实测 yaw 分别只有
+          1 / 17 / 99 度, 对应 RTF 0.85 / 0.88 / 1.01, 差了两个数量级。
+          "转向硬被限制在 1%" 曾被当成插件缺陷, 实际是低 RTF 单次测量的误判,
+          全仓已改正。结论: 这个 stand-in 的角速度不可标定, 导航不得依赖
+          转向到位。缺陷 11 的机体方位角分解 + 受阻切向横移脱困正是为此设计:
+          用 vx/vy 绕开对 wz 的依赖。
+        evidence_tools:
+          - tools/probe_turn_truth.py
+          - scripts/_measure_axes.sh
+
+    # 导航只允许指望这些轴。check_motion_capability.py 会拿它核对 contract
+    # 限速: 声明可用却被 adapter 夹成 0 -> 直接 FAIL。
+    navigation_may_depend_on:
+      - vx
+      - vy
+    navigation_must_not_depend_on:
+      - wz
+
+  # -------------------------------------------------------------------
+  # 2) 真实 gait 路径 (悬停模型: base_link 关重力 + 出生 -z 0.07)
+  #    运动学 bug 已修 (trot 旋转分量反号), 但横移/转向仍随 RTF 摆动,
+  #    因此仍未标定 —— 不因为"修好了运动学"就顺手标成 calibrated。
+  # -------------------------------------------------------------------
+  gazebo_gait_hover:
+    description: >-
+      真实 trot gait + 悬停模型。trot_gait.cpp 的速度分解已按刚体关系重写,
+      离线校验 7/7 残差为 0, 但 Gazebo 内实测横移/转向仍随 RTF 摆动,
+      故仍不可标定。
+
+    axes:
+
+      vx:
+        status: derated
+        rtf_dependent: true
+        measured_ratio:
+          min: 0.80
+          max: 1.00
+        usable_for:
+          - translation
+        not_usable_for:
+          - precise_positioning
+        evidence: >-
+          腿拖地消除后前进可用, 但幅度仍随 RTF 变化, 未做多种子标定。
+
+      vy:
+        status: uncalibrated
+        rtf_dependent: true
+        measured_ratio: null
+        usable_for: []
+        not_usable_for:
+          - precise_positioning
+        evidence: >-
+          悬停模型下横移仍随 RTF 摆动, 无稳定比例可给出。
+
+      wz:
+        status: uncalibrated
+        rtf_dependent: true
+        measured_ratio: null
+        usable_for: []
+        not_usable_for:
+          - heading_control
+          - turning_in_place
+        evidence: >-
+          同上, 转向随 RTF 摆动。
+
+    navigation_may_depend_on:
+      - vx
+    navigation_must_not_depend_on:
+      - vy
+      - wz
+
+  # -------------------------------------------------------------------
+  # 3) PuppyPi 实机 —— SDK 未接入, 全部未标定。
+  #    诚实标记: 一个轴都不敢说可用, real 后端因此 fail-fast。
+  # -------------------------------------------------------------------
+  puppypi_real:
+    description: >-
+      PuppyPi 实体机。SDK / LiDAR / IMU / ADC / GPIO 尚未接入,
+      没有任何一次实机轴响应测量。全部标 uncalibrated 是有意为之:
+      宁可让 real 后端 fail-fast, 也不能把"没测过"包装成"能用"。
+
+    axes:
+
+      vx:
+        status: uncalibrated
+        rtf_dependent: null
+        measured_ratio: null
+        usable_for: []
+        not_usable_for:
+          - translation
+          - positioning
+        evidence: >-
+          无实机测量, SDK 未接入。
+
+      vy:
+        status: uncalibrated
+        rtf_dependent: null
+        measured_ratio: null
+        usable_for: []
+        not_usable_for:
+          - translation
+          - positioning
+        evidence: >-
+          无实机测量, SDK 未接入。
+
+      wz:
+        status: uncalibrated
+        rtf_dependent: null
+        measured_ratio: null
+        usable_for: []
+        not_usable_for:
+          - heading_control
+        evidence: >-
+          无实机测量, SDK 未接入。
+
+    navigation_may_depend_on: []
+    navigation_must_not_depend_on:
+      - vx
+      - vy
+      - wz
+
+# ---------------------------------------------------------------------
+# 校验策略 (由 scripts/check_motion_capability.py 执行)
+# ---------------------------------------------------------------------
+policy:
+
+  # 声明可用 -> contract 的对应限速必须 > 0。
+  # 命中即 FAIL: 说明"导航指望这个轴, 但限速把它夹成 0", 是静默失效。
+  usable_axis_requires_nonzero_limit:
+    vx: adapter.max_linear_x
+    vy: adapter.max_linear_y
+    wz: adapter.max_angular_z
+
+  # 声明不可用 -> 允许限速为 0 (夹死等于显式禁用, 不是 bug), 只报 INFO。
+
+  # 每个 profile 必须声明 may/must_not 两个清单, 且不得自相矛盾
+  # (同一轴既在 may 又在 must_not -> FAIL)。
+  require_explicit_dependency_declaration: true

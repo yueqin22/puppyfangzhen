@@ -89,11 +89,61 @@ def _parse_block(lines, i, indent):
         key, _, rest = stripped.partition(":")
         key = key.strip()
         rest = _strip_inline_comment(rest).strip()
+
+        # 块标量 (folding): `key: >` / `>-` / `|` / `|-`
+        # ---------------------------------------------------------------
+        # 不加这段时, `rationale: >-` 会被解析成字面字符串 ">-", 而下面那段
+        # 缩进更深的正文会被当作"缩进不匹配"直接跳过 —— **静默丢掉整段文字**。
+        # geometry_spec.yaml 的 ue_physics_capsule.rationale 就是这样变成 ">-"
+        # 的: 校验脚本读到的不是理由, 而是一个占位符, 却因为只做非空判断而一直
+        # "PASS"。任何折叠标量都会踩到, 因此在这里统一处理。
+        if rest in (">", ">-", "|+", "|-", "|", ">"):
+            literal = rest.startswith("|")
+            j = i + 1
+            buf = []
+            while j < len(lines):
+                lr = lines[j]
+                if not lr.strip():
+                    buf.append("")
+                    j += 1
+                    continue
+                lcur = len(lr) - len(lr.lstrip(" "))
+                if lcur <= indent:
+                    break
+                buf.append(lr.strip())
+                j += 1
+            if literal:
+                node[key] = "\n".join(buf).strip()
+            else:
+                # folded: 连续非空行折叠成一行 (空格连接), 空行保留为换行
+                text = ""
+                for ln in buf:
+                    if ln == "":
+                        text += "\n"
+                    else:
+                        if text and not text.endswith("\n"):
+                            text += " "
+                        text += ln
+                node[key] = text.strip()
+            i = j
+            continue
+
+        # 先跳过空行与注释行再判断嵌套。
+        # 不这么做的话, `profiles:` 后面只要跟一个空行, 下一行又是注释,
+        # nxt_indent 就会被算成 0 (空行没有缩进), 于是整个嵌套块被判为
+        # "没有子节点" -> profiles 静默变成 None。空行/注释是排版习惯,
+        # 不该改变语义。
         nxt = i + 1
+        while nxt < len(lines):
+            _n = lines[nxt].strip()
+            if not _n or _n.startswith("#"):
+                nxt += 1
+                continue
+            break
         if nxt < len(lines):
             nxt_raw = lines[nxt]
             nxt_stripped = nxt_raw.strip()
-            nxt_indent = len(nxt_raw) - len(nxt_raw.lstrip(" ")) if nxt_stripped else indent
+            nxt_indent = len(nxt_raw) - len(nxt_raw.lstrip(" "))
             if rest == "" and nxt_stripped.startswith("- "):
                 lst = []
                 j = nxt

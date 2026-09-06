@@ -35,7 +35,22 @@ report() {  # name expected_exit actual_exit
     fi
 }
 
-PY="${PYTHON:-python3}"
+# 解释器选择: 本机存在两个 python —— 3.13 (默认) 没有 PyYAML/pytest,
+# C:\Program Files\Python312 才有。直接用默认解释器会让"配置/几何/单测"门禁
+# 静默降级成 SKIP 或误报, 所以显式挑一个**同时具备 pytest 与 PyYAML**的解释器。
+pick_py() {
+    for cand in "${PYTHON:-}" "python3" "python" \
+        "C:/Program Files/Python312/python.exe" \
+        "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe"; do
+        [ -n "$cand" ] || continue
+        command -v "$cand" >/dev/null 2>&1 || [ -x "$cand" ] || continue
+        if "$cand" -c "import pytest, yaml" >/dev/null 2>&1; then
+            echo "$cand"; return 0
+        fi
+    done
+    echo "${PYTHON:-python3}"
+}
+PY="$(pick_py)"
 
 echo "================================================================"
 echo " Puppy 导航仿真回归套件"
@@ -58,21 +73,36 @@ echo "== [build] sim_test =="
 if [ $? -ne 0 ]; then echo "[FAIL] sim_test build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
 
 # ---- 2) 编译 nav_ue_bridge ----
+# 同一份源码产出两个可执行文件:
+#   nav_ue_bridge.exe       生产入口 (接真实 UE)
+#   nav_ue_bridge_test.exe  §5.1/§5.2 复验用的同源码副本
+#     为什么单独再编一份: verify_bridge_handshake.py 会主动连 7777 端口并断言
+#     无客户端超时/静默急停, 与人工启动的 UE 会话抢端口。给它独立文件名, 是为了
+#     让"门禁跑的 bridge"与"演示跑的 bridge"可区分, 而不是靠约定不冲突。
 echo "== [build] nav_ue_bridge =="
-( cd "$BRIDGE_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT /DNOMINMAX \
-    /I. /I../sim /I../puppy_nav_core/include /I../common \
-    nav_ue_bridge.cpp \
+BRIDGE_SRC="nav_ue_bridge.cpp \
     ../puppy_nav_core/src/occupancy_grid.cpp \
     ../puppy_nav_core/src/costmap.cpp \
     ../puppy_nav_core/src/astar_planner.cpp \
     ../puppy_nav_core/src/amcl.cpp \
-    ../puppy_nav_core/src/path_validator.cpp \
+    ../puppy_nav_core/src/path_validator.cpp"
+( cd "$BRIDGE_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT /DNOMINMAX \
+    /I. /I../sim /I../puppy_nav_core/include /I../common \
+    $BRIDGE_SRC \
     /Fe:build/Release/nav_ue_bridge.exe \
     /link /OUT:build/Release/nav_ue_bridge.exe ws2_32.lib ) >/dev/null 2>&1
 if [ $? -ne 0 ]; then echo "[FAIL] nav_ue_bridge build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
 
+( cd "$BRIDGE_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT /DNOMINMAX \
+    /I. /I../sim /I../puppy_nav_core/include /I../common \
+    $BRIDGE_SRC \
+    /Fe:build/Release/nav_ue_bridge_test.exe \
+    /link /OUT:build/Release/nav_ue_bridge_test.exe ws2_32.lib ) >/dev/null 2>&1
+if [ $? -ne 0 ]; then echo "[FAIL] nav_ue_bridge_test build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+
 SIM="$SIM_DIR/build/Release/sim_test.exe"
 BR="$BRIDGE_DIR/build/Release/nav_ue_bridge.exe"
+BRT="$BRIDGE_DIR/build/Release/nav_ue_bridge_test.exe"
 SC="$ROOT/config/scene_home.json"
 
 # ---- 3) C++ 冒烟 (300 帧, 安全门控, exit 0) ----
@@ -120,6 +150,69 @@ report "python_smoke (exit 0)" 0 $?
 echo "== [test] config_consistency =="
 "$PY" "$ROOT/scripts/check_config_consistency.py" --report "$ART/config_consistency.json" >/dev/null 2>&1
 report "config_consistency (exit 0)" 0 $?
+
+# ---- 9) 场景校验 (exit 0) ----
+# 场景是单一真源: 房间/障碍/目标/初始位姿/可达性/UE 镜像全在这里把关。
+echo "== [test] scene_validation =="
+"$PY" "$ROOT/scripts/validate_scene.py" >/dev/null 2>&1
+report "scene_validation (exit 0)" 0 $?
+
+# ---- 10) 几何尺寸一致性 (jihua20260905 §4 P0-3 出口标准) ----
+# 防止"契约说 0.35、Nav2 实际按 0.25 规划"这类偷安全的隐性漂移。
+echo "== [test] geometry_consistency =="
+"$PY" "$ROOT/scripts/check_geometry_consistency.py" --report "$ART/geometry_consistency.json" >/dev/null 2>&1
+report "geometry_consistency (exit 0)" 0 $?
+
+# ---- 10b) vx/vy/wz 运动能力表 (§4 P0-3 第 4 条 / §7.4) ----
+# 防止"导航指望某个轴、限速却把它夹成 0"的静默失效 —— 这正是 max_linear_y=0.0
+# 那个历史坑的形状。
+echo "== [test] motion_capability =="
+"$PY" "$ROOT/scripts/check_motion_capability.py" --report "$ART/motion_capability.json" >/dev/null 2>&1
+report "motion_capability (exit 0)" 0 $?
+
+# ---- 11) §5.1 bridge 握手复验 ----
+# 注意用 nav_ue_bridge_test 副本: 它会主动占用端口并断言"无客户端超时",
+# 不能与人工演示会话抢 7777。
+echo "== [test] bridge_handshake (§5.1) =="
+if [ -x "$BRT" ]; then
+    "$PY" "$ROOT/scripts/verify_bridge_handshake.py" --bridge "$BRT" \
+        --report "$ART/bridge_handshake.json" >/dev/null 2>&1
+    report "bridge_handshake (exit 0)" 0 $?
+else
+    echo "[SKIP] bridge_handshake (bridge not built)"; FAIL=$((FAIL+1))
+fi
+
+# ---- 12) §5.2/§5.3 bridge 首帧一致性与逐帧指标 ----
+echo "== [test] bridge_loopback (§5.2/§5.3) =="
+if [ -x "$BRT" ]; then
+    "$PY" "$ROOT/scripts/verify_bridge_loopback.py" --bridge "$BRT" \
+        --report "$ART/bridge_loopback.json" >/dev/null 2>&1
+    report "bridge_loopback (exit 0)" 0 $?
+else
+    echo "[SKIP] bridge_loopback (bridge not built)"; FAIL=$((FAIL+1))
+fi
+
+# ---- 13) §5.2 bridge 单位换算单测 (UE cm <-> bridge m) ----
+echo "== [test] bridge_units =="
+"$PY" -m pytest -q --no-header -p no:cacheprovider \
+    "$ROOT/cpp_src/bridge/test_bridge_units.py" >/dev/null 2>&1
+report "bridge_units (exit 0)" 0 $?
+
+# ---- 14) Python 单测 (§12 验收: 关键测试 100% 通过) ----
+# 刻意只跑**受维护套件**, 不跑仓库根:
+#   根级散落 17 个 test_*.py / 十余个研究脚本 (test_v4_all/test_zmq/test_conn 等),
+#   直接 `pytest -q` 根目录会全仓收集 —— 实测 8 分钟仍未结束 (还会去连 socket),
+#   数字既不可复现也不可解释。受维护套件见 docs/test_inventory.md。
+echo "== [test] python_pytest =="
+if [ "${SKIP_PYTEST:-0}" = "1" ]; then
+    echo "[SKIP] python_pytest (SKIP_PYTEST=1)"
+else
+    ( cd "$ROOT/src/puppy_minicpm_robot" && \
+      PYTHONPATH=".$PYTHONPATH" \
+      "$PY" -m pytest test -q --no-header -p no:cacheprovider ) \
+        >"$ART/python_pytest.txt" 2>&1
+    report "python_pytest (exit 0)" 0 $?
+fi
 
 echo "================================================================"
 echo " 回归结果: PASS=$PASS  FAIL=$FAIL  BUILD_FAIL=$BUILD_FAIL"

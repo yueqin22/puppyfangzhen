@@ -317,6 +317,11 @@ class TestMissionGrounder:
         from puppy_minicpm_robot.mission_grounder_node import HAS_RCLPY
 
         if not HAS_RCLPY:
+            # 书面原因 (jihua20260905.md §12 "skipped 有书面原因"):
+            # 本用例断言的是"TF listener 建好之后 buffer 没有被后续赋值清空",
+            # 必须真的构造一个 TransformListener 才能复现; 在 Windows 无 ROS2
+            # 环境下 rclpy 不可用, 该路径根本不会被走到。放行到 WSL 侧执行,
+            # 见 docs/test_inventory.md。
             pytest.skip("needs a ROS environment to construct a TF listener")
 
         assert grounder.tf_buffer is not None, "TF buffer was discarded after init"

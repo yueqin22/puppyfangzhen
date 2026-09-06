@@ -1,0 +1,94 @@
+# geometry_spec.yaml — 派生几何单一真源 (P0-3 §4.1 + 出口标准)
+# =====================================================================
+# 按 jihua20260905.md P0-3 第 1/3 条: 把"规划 footprint""碰撞 footprint"
+# "视觉表现尺寸"明确分成三个字段, 全部由契约/URDF 派生, 禁止在脚本里再次写死。
+#
+# 权威来源:
+#   - 规划/碰撞尺寸 -> config/simulation_contract.yaml (robot.footprint / robot.radius)
+#   - 视觉体尺寸     -> src/puppy_description/urdf/puppy.urdf.xacro (torso box)
+#
+# 本文件是"派生 + 受校验"的单一几何真源: scripts/check_geometry_consistency.py
+# 会从上述两个权威来源重新计算并比对, 任何漂移都会以非 0 退出码暴露。
+#
+# 设计要点:
+#   视觉体 (0.30x0.18x0.10) 明显小于规划 footprint (0.70x0.50), 这是**有意为之**:
+#   规划 footprint 是仿真安全基线, PuppyPi 实体尺寸不同, 不能覆盖仿真基线
+#   (见计划 P0-3 第 2 条: 实体尺寸差异应通过 profile 处理, 不覆盖仿真基线)。
+
+schema_version: 1
+
+# ---- 视觉表现尺寸 (来源: puppy.urdf.xacro torso box) ----
+visual_body:
+  source: src/puppy_description/urdf/puppy.urdf.xacro
+  length: 0.30          # body_length
+  width: 0.18           # body_width
+  height: 0.10          # body_height
+  stand_height: 0.205   # base_link 离地高度 (base_footprint->base_link joint)
+  note: 实体 PuppyPi 视觉/碰撞盒, 仅用于 Gazebo 碰撞体与展示, 不参与导航规划。
+
+# ---- 规划 footprint (来源: contract robot.footprint, 机器人局部坐标 m, 逆时针) ----
+planning_footprint:
+  source: config/simulation_contract.yaml#robot.footprint
+  corners:
+    - [-0.35, -0.25]
+    - [-0.35,  0.25]
+    - [ 0.35,  0.25]
+    - [ 0.35, -0.25]
+  length: 0.70          # contract robot.length
+  width: 0.50           # contract robot.width
+
+# ---- 规划/CBF 安全半径 (来源: contract robot.radius) ----
+planning_radius: 0.35
+
+# ---- 圆形碰撞/CBF 包络 (来源: contract robot.radius) ----
+collision_capsule:
+  center: [0.0, 0.0]
+  radius: 0.35
+
+# ---- Nav2 footprint (来源: 同 planning_footprint, 单一真源不重复) ----
+nav2_footprint:
+  source: config/simulation_contract.yaml#robot.footprint
+  polygon:
+    - [-0.35, -0.25]
+    - [-0.35,  0.25]
+    - [ 0.35,  0.25]
+    - [ 0.35, -0.25]
+
+# ---- Nav2 costmap 参数 (来源: contract robot.radius / planning.inflation_radius) ----
+# 历史漂移: src/puppy_nav/config/nav2_params.yaml 曾写死 robot_radius: 0.25、
+# inflation_radius: 0.30, 与契约 0.35 / 0.43 不一致 —— 这正是计划 §2.3 点名的
+# "不同文件曾使用 0.25/0.30/0.35m 机器人半径"。现在由本文件派生并强制校验。
+nav2_costmap:
+  source: config/simulation_contract.yaml
+  robot_radius: 0.35         # = contract robot.radius
+  inflation_radius: 0.43     # = contract planning.inflation_radius
+  target_files:
+    - src/puppy_nav/config/nav2_params.yaml
+
+# ---- UE 物理胶囊 (来源: UE 工程权威镜像 PuppyRobotPawn.cpp, 单位 cm) ----
+# 有意偏离: UE 物理胶囊 20cm (0.20m) 明显小于规划半径 0.35m。
+# 原因: UE 胶囊是 Pawn 的**物理扫掠体**, 门道几何按它通过来设计; 若直接放大到
+# 规划半径, 机器人在 UE 里会卡门。规划侧的安全间距由 bridge/C++ costmap 的
+# 0.35m 膨胀负责, 不由 Pawn 胶囊负责。
+# 因此这里**记录的不是"必须等于规划半径", 而是"必须等于已记录值 + 偏离有据"**:
+# 数值一旦漂移 (有人手改 UE 源码) 立即 FAIL, 但"小于规划半径"本身按设计允许。
+ue_physics_capsule:
+  source: cpp_src/bridge/ue_modules/PuppyRobotPawn.cpp
+  radius_cm: 20.0
+  half_height_cm: 30.0
+  deviation_from_planning_radius: intentional
+  rationale: >-
+    UE Pawn 物理扫掠体按 PuppyPi 实体机身 (40cm 宽) 设置, 门道可通行性由它保证;
+    导航安全间距由 bridge/C++ 侧 0.35m 规划膨胀负责, 两者职责不同。
+    bridge 侧首帧膨胀检查与 A* 均使用契约 planning_radius, 不使用 UE 胶囊半径。
+
+# ---- 校验规则 (由 check_geometry_consistency.py 执行) ----
+relationships:
+  - rule: footprint_encloses_visual_body      # 规划足迹必须包络视觉体 (视觉体不得超出规划安全边界)
+  - rule: radius_le_circumradius              # planning_radius <= sqrt((L/2)^2 + (W/2)^2)
+  - rule: footprint_closed_nonzero_area       # footprint 闭合, 面积>0, 不自交
+  - rule: collision_radius_eq_planning_radius # 圆形碰撞包络半径 == 规划半径
+  - rule: spec_matches_sources                # 本文件不得与 contract/URDF 权威来源漂移
+  - rule: nav2_matches_contract               # nav2_params 的 robot_radius/inflation_radius 不得写死漂移
+  - rule: ue_capsule_matches_recorded         # UE 胶囊必须等于本文件记录值 (偏离需有据)
+  - rule: inflation_ge_radius_plus_margin     # inflation_radius >= robot_radius + safety_margin

@@ -38,7 +38,7 @@ class MotionAdapterNode(Node):
         # use_sim=False：尝试导入 PuppyPi SDK，失败则报错退出
         self.declare_parameter('use_sim', True)
         self.declare_parameter('max_linear_x', 0.3)
-        self.declare_parameter('max_linear_y', 0.0)
+        self.declare_parameter('max_linear_y', 0.3)
         self.declare_parameter('max_angular_z', 1.2)
         self.declare_parameter('cmd_timeout', 1.0)
         self.declare_parameter('accel_limit', 2.0)
@@ -60,7 +60,13 @@ class MotionAdapterNode(Node):
         self.last_cmd_time = self.get_clock().now()
 
         # Smoothed velocity (for accel limiting)
+        # P0-3: vy 与 vx 同等对待。此前这里只有 current_vx/current_wz,
+        # 而 _on_cmd_vel 根本不读 msg.linear.y, 真机侧 send_velocity() 更是把
+        # 第二个参数硬编码成 0.0 —— 导航发出的横移指令在整条 adapter 链上被
+        # 静默丢弃。平台实测横移可兑现 82%~118% (见 config/motion_capability.yaml),
+        # 脱困行为正依赖它, 所以这里必须能走通。
         self.current_vx = 0.0
+        self.current_vy = 0.0
         self.current_wz = 0.0
         self.accel_limit = float(self.get_parameter('accel_limit').value)
         self.yaw_rate_limit = float(self.get_parameter('yaw_rate_limit').value)
@@ -104,6 +110,7 @@ class MotionAdapterNode(Node):
 
         # Apply limits (gaijin2.md 7.3)
         target_vx = max(-self.max_linear_x, min(self.max_linear_x, msg.linear.x))
+        target_vy = max(-self.max_linear_y, min(self.max_linear_y, msg.linear.y))
         target_wz = max(-self.max_angular_z, min(self.max_angular_z, msg.angular.z))
 
         # Smooth acceleration
@@ -112,25 +119,34 @@ class MotionAdapterNode(Node):
         max_dw = self.yaw_rate_limit * dt
         self.current_vx = max(self.current_vx - max_dv,
                               min(self.current_vx + max_dv, target_vx))
+        self.current_vy = max(self.current_vy - max_dv,
+                              min(self.current_vy + max_dv, target_vy))
         self.current_wz = max(self.current_wz - max_dw,
                               min(self.current_wz + max_dw, target_wz))
 
         # Dead zone
         if abs(self.current_vx) < 0.01:
             self.current_vx = 0.0
+        if abs(self.current_vy) < 0.01:
+            self.current_vy = 0.0
         if abs(self.current_wz) < 0.05:
             self.current_wz = 0.0
 
         # P0-3: 仿真模式下只记录速度，真机模式下发送到 SDK
         if self.use_sim:
-            # 仿真模式：速度已记录在 self.current_vx/wz，供状态发布
+            # 仿真模式：速度已记录在 self.current_vx/vy/wz，供状态发布
             pass
         else:
             # 真机模式：发送到 PuppyPi SDK
+            # 不再把 vy 硬编码成 0.0：那会让"导航发出横移、底盘毫无反应"这种
+            # 静默失效无法被发现。上限由 max_linear_y 约束（契约单一真源）。
             if self.puppypi:
-                self.puppypi.send_velocity(self.current_vx, 0.0, self.current_wz)
+                self.puppypi.send_velocity(self.current_vx, self.current_vy,
+                                           self.current_wz)
 
-        self.moving = abs(self.current_vx) > 0.01 or abs(self.current_wz) > 0.05
+        self.moving = (abs(self.current_vx) > 0.01
+                       or abs(self.current_vy) > 0.01
+                       or abs(self.current_wz) > 0.05)
         if self.moving:
             self.platform_state = MotionState.EXECUTING
 
@@ -141,7 +157,10 @@ class MotionAdapterNode(Node):
         # Command timeout -> stop
         if (self.controllable and self.standing and
                 (now - self.last_cmd_time).nanoseconds / 1e9 > self.cmd_timeout):
+            # P0-4: 命令超时 -> 三轴全部归零。漏掉 vy 会留下"超时后仍在横移"的
+            # 安全缺口。
             self.current_vx = 0.0
+            self.current_vy = 0.0
             self.current_wz = 0.0
             if self.platform_state == MotionState.EXECUTING:
                 self.platform_state = MotionState.READY
@@ -176,7 +195,9 @@ class MotionAdapterNode(Node):
         msg.controllable = self.controllable
         msg.gait_mode = self.gait_mode
         msg.linear_x = self.current_vx
-        msg.linear_y = 0.0
+        # 上报真实的横移速度。写死 0.0 会让 /platform/motion_state 与底盘实际
+        # 状态不一致 —— 上层监控看到的永远是"没有横移", 脱困是否生效无从判断。
+        msg.linear_y = self.current_vy
         msg.angular_z = self.current_wz
         msg.platform_state = self.platform_state
         self.state_pub.publish(msg)
