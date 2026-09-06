@@ -177,6 +177,14 @@ struct NavState {
     int rxf_consec_big_startfix = 0;
     int rxf_last_startfix_warn = 0;
     int rxf_recover_cooldown = 0;
+    // §5.2: 场景声明的初始位姿（来自 scene_home.json initial_pose），用于首帧 GT
+    // 一致性校验；bridge 把 AMCL 初始云与 est 都种在该位姿上。
+    double scene_init_x = 0.0, scene_init_y = 0.0, scene_init_yaw = 0.0;
+    // §5.3: 逐帧新增的可机读指标
+    int dbg_amcl_updated = 0;        // 1 = 本帧 AMCL 实际执行了更新
+    double dbg_est_prev_x = 0.0, dbg_est_prev_y = 0.0;  // 上一帧 est（算运动距离）
+    double dbg_motion_delta = 0.0;   // 本帧 est 位移 (m)
+    double dbg_proc_ms = 0.0;        // 本帧 bridge 计算耗时 (ms)
     int rxf_escape_remaining = 0;
     double rxf_escape_cmd_vx = 0;
     double rxf_escape_cmd_vy = 0;
@@ -287,6 +295,15 @@ static void load_scene(NavState& state, const std::string& json_path) {
                 state.patrol_targets = scene_loader::load_patrol_targets(json_path);
                 state.obstacles = scene_loader::load_obstacles(json_path);
                 state.pedestrians = scene_loader::load_pedestrians(json_path);
+                // §5.2: 取出场景声明的初始位姿，供首帧 GT 一致性校验
+                try {
+                    auto cfg = scene_loader::load_config(json_path);
+                    state.scene_init_x = cfg.init_x;
+                    state.scene_init_y = cfg.init_y;
+                    state.scene_init_yaw = cfg.init_yaw;
+                } catch (const std::exception&) {
+                    state.scene_init_x = state.scene_init_y = state.scene_init_yaw = 0.0;
+                }
                 filter_patrol_targets(state);
                 printf("[Bridge] scene loaded\n");
                 return;
@@ -303,6 +320,7 @@ static void load_scene(NavState& state, const std::string& json_path) {
 }
 static void process_frame(NavState& state, const FrameData& frame_data) {
     if (!state.initialized) return;
+    state.dbg_amcl_updated = 0;   // §5.3: 每帧重置，仅当 AMCL 实际更新时置 1
 
     // CRITICAL FIX: prev_true must initialize to the FIRST frame's GT position,
     // NOT (0,0,0).  Previously the robot would spawn at (-1,-3) and the first
@@ -1276,6 +1294,7 @@ CBFSafety cbf(0.25, 2.0, 0.45);  // [comment stripped: encoding-corrupted]
         prev_tx = robot_x; prev_ty = robot_y; prev_tyaw = robot_yaw;
 
         auto result = state.nav.amcl.update(dx, dy, dyaw, scan_angles, scan_distances, frame);
+        state.dbg_amcl_updated = 1;   // §5.3: 本帧 AMCL 实际执行了更新
         if (frame < 2) { printf("[DIAG] amcl_done %d\n", frame); fflush(stdout); }
         state.nav.est_x = std::get<0>(result);
         state.nav.est_y = std::get<1>(result);
@@ -1903,7 +1922,10 @@ int main(int argc, char* argv[]) {
                     // R31: LiDAR reactive safety filter (r31_scale < 1 means the
                     // filter throttled this frame; a low mean scale is the R29c
                     // creep regression signature)
-                    "r31_bound,r31_dmin,r31_scale,r31_dev\n");
+                    "r31_bound,r31_dmin,r31_scale,r31_dev,"
+                    // §5.3: AMCL 更新标志 / 本帧运动距离 / 计算耗时
+                    // (RTF 与消息延迟需 UE 侧时钟，standalone 模式无，标注 UE-DEPENDENT)
+                    "amcl_updated,motion_delta,proc_ms\n");
             printf("[Bridge] trace -> %s\n", trace_path.c_str());
             const std::string ray_path = trace_path + ".rays.csv";
             g_ray_fp = fopen(ray_path.c_str(), "w");
@@ -1997,11 +2019,15 @@ if (max_frames <= 0) max_frames = 36000;  // [comment stripped: encoding-corrupt
     if (!state.patrol_targets.empty()) {
         state.goal_x = state.patrol_targets[0].x;
         state.goal_y = state.patrol_targets[0].y;
-        state.nav.amcl.init_cloud(state.patrol_targets[0].x, state.patrol_targets[0].y, 0.0);
-        state.nav.est_x = state.patrol_targets[0].x;
-        state.nav.est_y = state.patrol_targets[0].y;
-        state.nav.est_yaw = 0.0;
+        // §5.2: 初始位姿以场景声明的 initial_pose 为准（不再种在目标点上），
+        // 首帧 GT 与 initial_pose 的偏差会被显式记录（见 GROUND_TRUTH 处理）。
+        state.nav.amcl.init_cloud(state.scene_init_x, state.scene_init_y, state.scene_init_yaw);
+        state.nav.est_x = state.scene_init_x;
+        state.nav.est_y = state.scene_init_y;
+        state.nav.est_yaw = state.scene_init_yaw;
         state.nav.est_conf = 1.0;
+        state.dbg_est_prev_x = state.scene_init_x;
+        state.dbg_est_prev_y = state.scene_init_y;
  printf("[Bridge] event\n");
     } else {
         state.goal_x = -1.0;
@@ -2143,21 +2169,39 @@ if (max_frames <= 0) max_frames = 36000;  // [comment stripped: encoding-corrupt
 
                 if (g_frame == 0 && state.initialized) {
                     if (!state.dynamic_init_done) {
-                        double dx0 = gt.x - state.nav.est_x;
-                        double dy0 = gt.y - state.nav.est_y;
-                        double dist0 = std::sqrt(dx0*dx0 + dy0*dy0);
- printf("[Bridge] event\n");
+                        // §5.2: 首帧 GT 与场景声明 initial_pose 的一致性校验。
+                        // est 已种在 initial_pose 上，故 dist0 即"UE 实际起点 vs 场景起点"偏差。
+                        double dx0 = gt.x - state.scene_init_x;
+                        double dy0 = gt.y - state.scene_init_y;
+                        double dyaw0 = gt.yaw - state.scene_init_yaw;
+                        double dev0 = std::sqrt(dx0*dx0 + dy0*dy0);
+                        printf("[Bridge] GT_FIRST_FRAME gt=(%.3f,%.3f,%.3f) scene_init=(%.3f,%.3f,%.3f) "
+                               "deviation=%.3f m dyaw=%.3f rad\n",
+                               gt.x, gt.y, gt.yaw,
+                               state.scene_init_x, state.scene_init_y, state.scene_init_yaw,
+                               dev0, dyaw0);
                         fflush(stdout);
-                        if (dist0 > 0.5) {
-                            printf("[Bridge] GT_INIT x=%.2f y=%.2f yaw=%.2f\n",
-                                   gt.x, gt.y, gt.yaw);
+                        // 仅做一次显式校正：偏差超过 1.0m 视为 UE PlayerStart 与场景不一致，
+                        // 记录告警并把 bridge 信念对齐到 GT（一次性，不每帧漂移）。
+                        if (dev0 > 1.0) {
+                            printf("[Bridge][WARN] GT_FIRST_FRAME 偏差 %.3f m 超过 1.0m 阈值 "
+                                   "-> 一次性显式校正 est 到 GT\n", dev0);
                             fflush(stdout);
                             state.nav.amcl.init_cloud(gt.x, gt.y, gt.yaw);
                             state.nav.est_x = gt.x;
                             state.nav.est_y = gt.y;
                             state.nav.est_yaw = gt.yaw;
-                        } else {
- printf("[Bridge] event\n");
+                            state.dbg_est_prev_x = gt.x;
+                            state.dbg_est_prev_y = gt.y;
+                        }
+                        // 首帧膨胀检查（镜像 validate_scene.py）：GT 必须落在任一障碍
+                        // 膨胀半径之外；落在障碍内即场景/UE 几何不一致。
+                        const double kRobotRadiusCheck = 0.35;  // 镜像契约 robot.radius
+                        double near_obs = nearest_obstacle_distance(gt.x, gt.y, state.obstacles);
+                        if (near_obs < kRobotRadiusCheck) {
+                            printf("[Bridge][WARN] GT_FIRST_FRAME 落入障碍膨胀区 "
+                                   "(nearest=%.3f m < %.3f m)\n", near_obs, kRobotRadiusCheck);
+                            fflush(stdout);
                         }
 
                         if (!state.patrol_targets.empty()) {
@@ -2324,7 +2368,15 @@ if (max_frames <= 0) max_frames = 36000;  // [comment stripped: encoding-corrupt
 
             state.dbg_escape_active = 0;
 
+            const int64_t proc_t0 = bridge::now_ms();
             process_frame(state, frame_data);
+            // §5.3: 本帧 bridge 计算耗时 + est 位移（运动距离增量）
+            state.dbg_proc_ms = (double)(bridge::now_ms() - proc_t0);
+            state.dbg_motion_delta = std::sqrt(
+                (state.nav.est_x - state.dbg_est_prev_x) * (state.nav.est_x - state.dbg_est_prev_x) +
+                (state.nav.est_y - state.dbg_est_prev_y) * (state.nav.est_y - state.dbg_est_prev_y));
+            state.dbg_est_prev_x = state.nav.est_x;
+            state.dbg_est_prev_y = state.nav.est_y;
             msg_in_frame = 0;
             frame_data.has_ground_truth = false;
             frame_data.has_ped_state = false;
@@ -2344,7 +2396,9 @@ if (max_frames <= 0) max_frames = 36000;  // [comment stripped: encoding-corrupt
                         "%.4f,%.4f,%.4f,%.4f,%.4f,%d,"
                         "%.6g,%.6g,%.6g,%.2f,%.2f,"
                         "%d,%d,%.3f,%.3f,%d,%d,%.3f,"
-                        "%d,%.3f,%.4f,%.0f\n",
+                        "%d,%.3f,%.4f,%.0f,"
+                        // §5.3: amcl_updated / motion_delta / proc_ms
+                        "%d,%.4f,%.2f\n",
                         g_frame, g_frame / 30.0,
                         tr_true_x, tr_true_y, tr_true_yaw,
                         ex, ey, state.nav.est_yaw,
@@ -2367,7 +2421,9 @@ if (max_frames <= 0) max_frames = 36000;  // [comment stripped: encoding-corrupt
                         state.dbg_la_los, state.dbg_la_naive_los,
                         state.dbg_clearance,
                         state.dbg_r31_bound, state.dbg_r31_dmin,
-                        state.dbg_r31_scale, state.dbg_r31_dev);
+                        state.dbg_r31_scale, state.dbg_r31_dev,
+                        state.dbg_amcl_updated, state.dbg_motion_delta,
+                        state.dbg_proc_ms);
             }
 
                 // R27-FIX(obs-3): 2900 was an odd stride that produced exactly

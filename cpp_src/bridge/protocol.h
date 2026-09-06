@@ -335,17 +335,35 @@ struct Link {
         std::vector<char> pl;
         RecvStatus st = recv_timeout(hdr, pl, timeout_ms);
         if (st != RECV_OK || static_cast<MsgType>(hdr.type) != MsgType::HELLO) {
+            // §5.1: 握手失败必须留下可追溯记录, 否则"版本不匹配"是近似静默的失败
+            std::printf("[HELLO] FAILED peer did not send HELLO "
+                        "(recv_status=%d, type=0x%04x, timeout=%dms)\n",
+                        (int)st, hdr.type, timeout_ms);
+            std::fflush(stdout);
             ps.conn_state = ConnState::FAULT;
             return false;
         }
         HelloMsg hello{};
         if (pl.size() >= sizeof(hello)) std::memcpy(&hello, pl.data(), sizeof(hello));
 
+        // §5.1: 记录收到的 HELLO (magic/版本/能力串/载荷长度)
+        char caps_buf[33] = {0};
+        std::memcpy(caps_buf, hello.capabilities, sizeof(hello.capabilities));
+        caps_buf[32] = '\0';
+        std::printf("[HELLO] recv magic=0x%04x version=%u caps=\"%s\" payload=%zu\n",
+                    hello.magic, hello.version, caps_buf, pl.size());
+        std::fflush(stdout);
+
         HelloAckMsg ack{};
         ack.magic   = PROTOCOL_MAGIC;
         ack.version = PROTOCOL_VERSION;
         if (hello.magic != PROTOCOL_MAGIC || hello.version != PROTOCOL_VERSION) {
             ack.status = 1;  // 版本不符
+            // §5.1: 明确记录不匹配的具体原因, 便于定位 UE 侧协议版本
+            std::printf("[HELLO_ACK] REJECT local(magic=0x%04x,version=%u) != "
+                        "peer(magic=0x%04x,version=%u)\n",
+                        PROTOCOL_MAGIC, PROTOCOL_VERSION, hello.magic, hello.version);
+            std::fflush(stdout);
             send(MsgType::HELLO_ACK, &ack, sizeof(ack));
             ps.conn_state = ConnState::FAULT;
             return false;
@@ -353,9 +371,14 @@ struct Link {
         ack.status = 0;
         std::snprintf(ack.server_info, sizeof(ack.server_info), "%s", caps);
         if (!send(MsgType::HELLO_ACK, &ack, sizeof(ack))) {
+            std::printf("[HELLO_ACK] SEND FAILED (caps=\"%s\")\n", caps);
+            std::fflush(stdout);
             ps.conn_state = ConnState::FAULT;
             return false;
         }
+        std::printf("[HELLO_ACK] sent status=0 version=%u server_info=\"%s\"\n",
+                    ack.version, caps);
+        std::fflush(stdout);
         ps.handshaked = true;
         ps.conn_state = ConnState::RUNNING;
         return true;
