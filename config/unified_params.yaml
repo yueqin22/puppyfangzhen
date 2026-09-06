@@ -111,3 +111,67 @@ monitoring:
   latency_timeout_ms: 50   # 单帧超时阈值 (ms)
   control_frequency_hz: 30 # 目标控制频率 (Hz)
   amcl_max_time_ms: 30     # AMCL 单帧最大耗时 (ms)
+
+# =====================================================================
+# 运行 Profile (jihua20260905.md §11 第 1 周出口)
+# =====================================================================
+# 顶部 profile: 选择激活档。本文件只声明"可选档位"与每档语义,
+# 不重复写死阈值——阈值一律来自 simulation_contract.yaml / motion_capability.yaml。
+#
+# 每档字段含义:
+#   description         人类可读用途
+#   acceptance_level   本档对应的验收级别 (SMOKE/INTEGRATION/REGRESSION/RELEASE)
+#   default_frames     本档默认帧数
+#   backend            默认导航后端 (cpp_nav_core / ue_bridge / gazebo_nav2)
+#   allow_mock         各子系统是否允许 mock/sim 后端, 以及约束
+#     nav_core         false=禁止用 mock 替代确定性导航核
+#     vision           true=允许 MiniCPM 视觉后端走 mock (必须画面标注)
+#     puppypi          sim/mock/real 三选一; real 当前未验收, 默认 sim
+#   enforce_single_source  true=运行前强制 geometry/motion/config 一致性门禁全绿
+#                         (release 档必须 true, 禁止"配置漂移悄悄过关")
+#   require_seed_sweep research 档要求多种子消融, 单 seed 不宣称结论
+profiles:
+  dev:
+    description: 本地开发默认档, 快速冒烟
+    acceptance_level: SMOKE
+    default_frames: 300
+    backend: cpp_nav_core
+    allow_mock:
+      nav_core: false
+      vision: true
+      puppypi: sim
+    enforce_single_source: false
+    require_seed_sweep: false
+  research:
+    description: 消融/论文实验档, 多种子批量回归
+    acceptance_level: REGRESSION
+    default_frames: 36000
+    backend: cpp_nav_core
+    allow_mock:
+      nav_core: false
+      vision: true
+      puppypi: sim
+    enforce_single_source: false
+    require_seed_sweep: true
+  release:
+    description: 发布验收档, 严格且不可静默回退
+    acceptance_level: RELEASE
+    default_frames: 108000
+    backend: cpp_nav_core
+    allow_mock:
+      nav_core: false
+      vision: false
+      puppypi: sim
+    enforce_single_source: true
+    require_seed_sweep: true
+  demo:
+    description: 答辩/视频展示档, 稳定优先
+    acceptance_level: INTEGRATION
+    default_frames: 9000
+    backend: ue_bridge
+    allow_mock:
+      nav_core: false
+      vision: true
+      puppypi: sim
+    enforce_single_source: false
+    require_seed_sweep: false

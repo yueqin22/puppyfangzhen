@@ -52,6 +52,9 @@ pick_py() {
 }
 PY="$(pick_py)"
 
+# 激活 profile (用于报告标签; 默认 dev)
+PROFILE="$("$PY" -c "import sys;sys.path.insert(0,'$ROOT');from config.config_loader import parse_yaml;print((parse_yaml(open('$ROOT/config/unified_params.yaml',encoding='utf-8').read()) or {}).get('profile','dev'))" 2>/dev/null || echo dev)"
+
 echo "================================================================"
 echo " Puppy 导航仿真回归套件"
 echo " root : $ROOT"
@@ -170,6 +173,19 @@ echo "== [test] motion_capability =="
 "$PY" "$ROOT/scripts/check_motion_capability.py" --report "$ART/motion_capability.json" >/dev/null 2>&1
 report "motion_capability (exit 0)" 0 $?
 
+# ---- 10c) 运行 Profile 有效性 (§11 第 1 周出口) ----
+# 激活 profile 必须定义在 unified_params.yaml 的 profiles: 中, 且 nav_core 不得为 mock。
+echo "== [test] profile_validity =="
+"$PY" "$ROOT/scripts/check_profile.py" --report "$ART/profile_check.json" >/dev/null 2>&1
+report "profile_validity (exit 0)" 0 $?
+
+# ---- 10d) 文档一致性 (§13 风险登记第 8 项) ----
+# 发布前必须无"历史文档与当前场景矛盾": 旧房间数 / 旧半径 / Jazzy 混写。
+# 历史计划/交接文档降为 WARNING, 不阻断; 活动文档矛盾阻断门禁。
+echo "== [test] docs_consistency =="
+"$PY" "$ROOT/scripts/check_docs_consistency.py" --report "$ART/docs_consistency.json" >/dev/null 2>&1
+report "docs_consistency (exit 0)" 0 $?
+
 # ---- 11) §5.1 bridge 握手复验 ----
 # 注意用 nav_ue_bridge_test 副本: 它会主动占用端口并断言"无客户端超时",
 # 不能与人工演示会话抢 7777。
@@ -217,6 +233,20 @@ fi
 echo "================================================================"
 echo " 回归结果: PASS=$PASS  FAIL=$FAIL  BUILD_FAIL=$BUILD_FAIL"
 echo "================================================================"
+
+# ---- 15) §9.3 一键发布报告 (信息性, 不阻断) ----
+# 聚合 artifacts/ 下已存在的 cpp_*_seedN_planB.json; 若本环境跑过 36000/108000
+# 长稳, 则直接生成 artifacts/<run_id>/ 完整报告, 否则仅聚合已有 smoke 证据。
+if ls "$ART"/cpp_*_seed1_planB.json >/dev/null 2>&1; then
+    echo "== [report] gen_release_report (§9.3) =="
+    RID="release-$(date +%Y%m%d)"
+    "$PY" "$ROOT/scripts/gen_release_report.py" --run-id "$RID" --profile "$PROFILE" \
+        >"$ART/release_report.log" 2>&1 || echo "[WARN] gen_release_report 未全绿, 见 $ART/release_report.log"
+    echo "  -> artifacts/$RID/ (summary.md + plots/)"
+else
+    echo "[SKIP] gen_release_report: 未发现 cpp_*_seedN_planB.json (本回归仅 smoke)"
+fi
+
 if [ "$FAIL" -eq 0 ] && [ "$BUILD_FAIL" -eq 0 ]; then
     echo "REGRESSION: ALL GREEN"
     exit 0
