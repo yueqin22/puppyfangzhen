@@ -21,6 +21,8 @@ make_baseline.py — 生成可复现的发布基线 artifacts (jihua20260905.md 
 import os
 import sys
 import json
+import glob
+import shutil
 import argparse
 import subprocess
 import hashlib
@@ -99,6 +101,19 @@ def _run(cmd, cwd):
         return -1, "subprocess error: %s" % e
 
 
+def _find_bridge():
+    """定位 nav_ue_bridge.exe; 未编译返回 None (诚实标记 not-measured)。"""
+    cands = [
+        os.path.join(_ROOT, "cpp_src", "bridge", "build", "Release", "nav_ue_bridge.exe"),
+        os.path.join(_ROOT, "cpp_src", "bridge", "build", "nav_ue_bridge.exe"),
+        os.path.join(_ROOT, "cpp_src", "bridge", "nav_ue_bridge.exe"),
+    ]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="生成发布基线 artifacts")
     ap.add_argument("--id", default="baseline-20260905")
@@ -145,6 +160,9 @@ def main(argv=None):
         "config/unified_params.yaml",
         "config/runtime.yaml",
         "config/profile_raspberry_pi.yaml",
+        # jihua20260905 §4 P0-3 新增的单一真源 (几何/运动能力), 必须一起锁哈希
+        "config/geometry_spec.yaml",
+        "config/motion_capability.yaml",
         "INTERFACES.md",
         "cpp_src/bridge/protocol.h",
     ]
@@ -168,6 +186,25 @@ def main(argv=None):
         [sys.executable, "scripts/validate_scene.py"], cwd=_ROOT)
     with open(os.path.join(out_dir, "scene_validation.txt"), "w", encoding="utf-8") as f:
         f.write(out_s)
+
+    # ---- geometry_consistency.json (§4 P0-3 出口标准) ----
+    # 锁死 scene/contract/URDF/Nav2/UE capsule 几何单一真源, 防止 0.25 vs 0.35 这类
+    # "偷安全"的隐性漂移在发布后才被发现。
+    rc_g, out_g = _run(
+        [sys.executable, "scripts/check_geometry_consistency.py",
+         "--report", os.path.join(out_dir, "geometry_consistency.json")],
+        cwd=_ROOT)
+    with open(os.path.join(out_dir, "geometry_consistency.txt"), "w", encoding="utf-8") as f:
+        f.write(out_g)
+
+    # ---- motion_capability.json (§4 P0-3 第4条 / §7.4) ----
+    # 记录 vx/vy/wz 各轴是否已标定, 禁止把未标定轴当可靠导航能力。
+    rc_mc, out_mc = _run(
+        [sys.executable, "scripts/check_motion_capability.py",
+         "--report", os.path.join(out_dir, "motion_capability.json")],
+        cwd=_ROOT)
+    with open(os.path.join(out_dir, "motion_capability.txt"), "w", encoding="utf-8") as f:
+        f.write(out_mc)
 
     # ---- python_pytest.json ----
     # 仓库根无 pytest 配置, 直接 `pytest -q` 会扫到全仓其它不可跑的 test_*.py
@@ -223,6 +260,87 @@ def main(argv=None):
             with open(os.path.join(out_dir, "python_pytest.txt"), "w", encoding="utf-8") as f:
                 f.write(out_t)
 
+    # ---- cpp_results/ (§4 P0-1: C++ 帧结果 + 结构化 JSON + 时延 csv) ----
+    # 不重跑实验 (长稳耗时长), 只把 artifacts/ 下已有的 Plan B 结果冻结进基线,
+    # 并生成索引便于不看聊天记录也能回答"当前版本跑过哪些帧数/种子"。
+    cpp_index = {"count": 0, "runs": [], "note": None, "timing_csvs": []}
+    planb_files = sorted(glob.glob(
+        os.path.join(_ROOT, "artifacts", "cpp_*_planB.json")))
+    if planb_files:
+        cpp_dir = os.path.join(out_dir, "cpp_results")
+        os.makedirs(cpp_dir, exist_ok=True)
+        for src in planb_files:
+            shutil.copy2(src, os.path.join(cpp_dir, os.path.basename(src)))
+            # 同名 timing csv (frame,ms) 一并冻结
+            tcsv = src[:-len(".json")] + ".timing.csv"
+            if os.path.exists(tcsv):
+                shutil.copy2(tcsv, os.path.join(cpp_dir, os.path.basename(tcsv)))
+                cpp_index["timing_csvs"].append(os.path.basename(tcsv))
+            try:
+                d = json.load(open(src, encoding="utf-8"))
+                m = d.get("metrics", {})
+                cpp_index["runs"].append({
+                    "file": os.path.basename(src),
+                    "test_name": d.get("test_name"),
+                    "seed": d.get("seed"),
+                    "frames": d.get("frames"),
+                    "status": d.get("status"),
+                    "exit_code": d.get("exit_code"),
+                    "acceptance_level": d.get("acceptance_level"),
+                    "config_hash": d.get("config_hash"),
+                    "astar_rate_pct": m.get("astar_rate_pct"),
+                    "amcl_avg_err_m": m.get("amcl_avg_err_m"),
+                    "amcl_max_err_m": m.get("amcl_max_err_m"),
+                    "collisions": m.get("collisions"),
+                    "rooms_visited": m.get("rooms_visited"),
+                    "total_distance_m": m.get("total_distance_m"),
+                    "stuck_ratio_pct": m.get("stuck_ratio_pct"),
+                })
+            except Exception:  # noqa: BLE001
+                cpp_index["runs"].append({"file": os.path.basename(src),
+                                          "parse_error": True})
+        cpp_index["count"] = len(cpp_index["runs"])
+    else:
+        cpp_index["note"] = ("NO DATA: artifacts/ 下无 cpp_*_planB.json；"
+                             "需先跑 C++ 长稳 (scripts/run_regression.sh 或 sim_test)")
+    with open(os.path.join(out_dir, "cpp_results.json"), "w", encoding="utf-8") as f:
+        json.dump(cpp_index, f, indent=2, ensure_ascii=False)
+
+    # ---- ue_bridge_checks.txt (§4 P0-1: bridge --help/--check-scene) ----
+    bridge = _find_bridge()
+    lines = []
+    lines.append("# UE bridge 基线检查 (jihua20260905 §4 P0-1)")
+    lines.append("generated_utc: %s" % now)
+    lines.append("git_sha: %s" % env["git"]["sha"])
+    lines.append("")
+    if bridge is None:
+        lines.append("RESULT: NOT MEASURED")
+        lines.append("")
+        lines.append("原因: 未找到 nav_ue_bridge.exe (需先用 MSVC 编译 cpp_src/bridge)。")
+        lines.append("本基线不假装该检查通过; 复现命令:")
+        lines.append("  source scripts/msvc_env.sh && cl.exe /O2 /std:c++17 /EHsc /utf-8 ...")
+        lines.append("  nav_ue_bridge.exe --check-scene --scene config/scene_home.json")
+        rc_b = None
+    else:
+        lines.append("bridge: %s" % bridge)
+        lines.append("")
+        # 注意: bridge 的参数形式是 `--check-scene <path>` (路径直接跟在后面),
+        # 不是 `--check-scene --scene <path>`。写错会变成
+        # "[FATAL] scene file not found: --scene" 并被误记成检查失败。
+        for label, extra in (("--help", ["--help"]),
+                             ("--check-scene",
+                              ["--check-scene",
+                               os.path.join(_ROOT, "config", "scene_home.json")])):
+            rc_x, out_x = _run([bridge] + extra, cwd=_ROOT)
+            lines.append("=== %s (exit=%s) ===" % (label, rc_x))
+            lines.append((out_x or "").strip()[:4000])
+            lines.append("")
+            if label == "--check-scene":
+                rc_b = rc_x
+        rc_b = rc_b if rc_b is not None else 0
+    with open(os.path.join(out_dir, "ue_bridge_checks.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
     # ---- metadata.json ----
     meta = {
         "baseline_id": args.id,
@@ -232,13 +350,21 @@ def main(argv=None):
         "commands": {
             "config_consistency": "python scripts/check_config_consistency.py",
             "scene_validation": "python scripts/validate_scene.py",
+            "geometry_consistency": "python scripts/check_geometry_consistency.py",
+            "motion_capability": "python scripts/check_motion_capability.py",
             "python_pytest": "python -m pytest -q (suite: src/puppy_minicpm_robot/test)",
+            "cpp_results": "冻结 artifacts/cpp_*_planB.json (不重跑, 见 cpp_results.json)",
+            "ue_bridge_checks": "nav_ue_bridge.exe --help / --check-scene",
         },
         "exit_codes": {
             "config_consistency": rc,
             "scene_validation": rc_s,
+            "geometry_consistency": rc_g,
+            "motion_capability": rc_mc,
             "python_pytest": rc_t,
+            "ue_bridge_check_scene": rc_b,
         },
+        "cpp_results_frozen": cpp_index["count"],
         "threshold_version": "scene_home.json v6.0 / simulation_contract schema_version 1",
         "min_required_rooms": 4,
     }

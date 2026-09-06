@@ -247,6 +247,14 @@ else
     echo "[SKIP] gen_release_report: 未发现 cpp_*_seedN_planB.json (本回归仅 smoke)"
 fi
 
+# ---- 16) §9.1/§9.3 实验矩阵 (消融表/失败案例表/导航稳定性表, 信息性不阻断) ----
+# 把已有证据自动汇总成可进论文的表格; 附带数据质量告警 (重复次数/指标饱和/方差)。
+echo "== [report] gen_experiment_tables (§9.1/§9.3) =="
+EID="experiments-$(date +%Y%m%d)"
+"$PY" "$ROOT/scripts/gen_experiment_tables.py" --run-id "$EID" \
+    >"$ART/experiment_tables.log" 2>&1 || echo "[WARN] gen_experiment_tables 未全绿, 见 $ART/experiment_tables.log"
+echo "  -> artifacts/$EID/ (ablation_table.md + failure_cases.md + navigation_stability_table.md)"
+
 if [ "$FAIL" -eq 0 ] && [ "$BUILD_FAIL" -eq 0 ]; then
     echo "REGRESSION: ALL GREEN"
     exit 0
