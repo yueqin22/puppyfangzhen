@@ -54,6 +54,20 @@ local_avoidance:
   emergency_stop_distance: 0.35
   command_timeout_sec: 0.5
 
+# P0-4: PuppyPi adapter 后端语义与 cmd_vel 看门狗 (单一真源)
+# backend 语义:
+#   mock = 单测/CI/消息协议/故障注入, 不代表真实执行器动力学
+#   sim  = Gazebo/UE/C++ 仿真输入输出, 传感器和执行器是仿真模型
+#   real = PuppyPi 实体机, 仅在 SDK+LiDAR+IMU+ADC+GPIO 全部预检通过后启用
+# allow_backend_fallback=false: sim/real 初始化失败必须 fail-fast, 禁止静默回退 mock
+adapter:
+  backend: mock
+  allow_backend_fallback: false
+  cmd_vel_timeout_sec: 1.0    # cmd_vel 静默超时 -> 自动发布零速度
+  max_linear_x: 0.3
+  max_linear_y: 0.0
+  max_angular_z: 1.2
+
 simulation:
   default_frames: 300
   max_frames: 108000         # 1 小时 @30Hz

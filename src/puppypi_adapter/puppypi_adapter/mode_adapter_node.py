@@ -34,29 +34,37 @@ class ModeAdapterNode(Node):
         # HardwareInterface handles both sim and real hardware abstraction
         self.hw = None
         self.sdk_connected = False
-        backend = 'sim' if self.use_sim else 'real'
+        # P0-4: backend_actual 记录"实际生效"的后端, 绝不因回退而谎报 configured 后端
+        # use_sim=True -> backend 'sim' (外部仿真器拥有动力学, 本节点只发命令与
+        # 使能/急停; 传感器数据由仿真器经 ROS topic 注入, 见 sim_interface.py)。
+        # 这与 'mock'(进程内自成体系的假动力学) 语义不同, 不得混用。
+        self.backend_requested = 'sim' if self.use_sim else 'real'
+        self.backend_actual = None
+
         try:
             from .hardware_interface import HardwareInterface
-            self.hw = HardwareInterface.create({'backend': backend})
+            self.hw = HardwareInterface.create({'backend': self.backend_requested})
             self.sdk_connected = self.hw.initialize()
+            self.backend_actual = self.backend_requested
             if not self.sdk_connected:
-                self.get_logger().warn(f'HardwareInterface ({backend}) initialization returned False, falling back to mock')
-                self.hw = HardwareInterface.create({'backend': 'mock'})
-                self.hw.initialize()
+                # P0-4: 初始化失败不再静默回退 mock —— 显式报错并退出, 避免
+                # "配置 real 却跑在 mock 上" 的静默降级被误当作真实运行.
+                raise RuntimeError(
+                    f'HardwareInterface ({self.backend_requested}) initialize() returned False')
         except Exception as exc:
-            self.get_logger().warn(
-                f'Failed to initialize HardwareInterface ({backend}): {exc}. Falling back to mock interface.'
+            self.get_logger().fatal(
+                f'HardwareInterface ({self.backend_requested}) unavailable: {exc}. '
+                f'P0-4 禁止静默回退 mock: 请修正 backend 配置或安装对应后端 '
+                f'(sim 需 sim_interface, real 需 PuppyPi SDK 且预检通过).'
             )
-            try:
-                from .hardware_interface import HardwareInterface
-                self.hw = HardwareInterface.create({'backend': 'mock'})
-                self.hw.initialize()
-            except Exception as mock_exc:
-                self.get_logger().error(f'Mock HardwareInterface initialization failed: {mock_exc}')
-                self.hw = None
+            raise
 
-        mode_tag = '[SIM]' if self.use_sim else ('[HARDWARE]' if self.sdk_connected else '[FALLBACK-MOCK]')
-        self.get_logger().info(f'Mode adapter started {mode_tag}')
+        self.backend_actual = self.backend_requested
+        mode_tag = ('[SIM]' if self.use_sim
+                    else ('[HARDWARE]' if self.sdk_connected else '[UNKNOWN]'))
+        self.get_logger().info(
+            f'Mode adapter started {mode_tag} '
+            f'(backend={self.backend_actual}, sdk_connected={self.sdk_connected})')
 
     def _on_posture_cmd(self, msg: String):
         """Handle posture command."""

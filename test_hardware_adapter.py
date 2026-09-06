@@ -33,6 +33,7 @@ from puppypi_adapter.hardware_interface import (
     HardwareInterface, SensorReadings, BatteryState, RobotHealthState, Watchdog
 )
 from puppypi_adapter.mock_interface import MockHardwareInterface
+from puppypi_adapter.sim_interface import SimHardwareInterface
 from puppypi_adapter.safety_subsystem_v2 import (
     SafetySubsystem, AlertLevel, EStopSource, DegradationMode,
     DegradationPolicy, AlertEvent
@@ -73,11 +74,55 @@ class TestHardwareInterface(unittest.TestCase):
         self.assertEqual(hw.max_linear_x, 0.3)
 
     def test_create_sim(self):
-        """测试创建仿真接口"""
+        """测试创建仿真接口 (P0-4: sim 是独立后端, 不再是 mock 的别名)"""
         config = {'backend': 'sim'}
         hw = HardwareInterface.create(config)
-        # sim 和 mock 都应该可用
         self.assertIsNotNone(hw)
+        self.assertIsInstance(hw, SimHardwareInterface)
+        # sim 后端禁止伪装成 mock
+        self.assertNotIsInstance(hw, MockHardwareInterface)
+
+    def test_sim_backend_does_not_fall_back_to_mock(self):
+        """P0-4 关键回归: 请求 sim 绝不能静默得到 mock
+
+        历史缺陷: sim_interface 缺失时 create() 用 try/except ImportError
+        静默回退 mock, 导致"配置为仿真、实际无执行器"被长期掩盖。
+        """
+        hw = HardwareInterface.create({'backend': 'sim'})
+        self.assertEqual(hw.stats.get('backend'), 'sim')
+
+    def test_sim_interface_never_fabricates_sensor_data(self):
+        """P0-4: sim 后端未注入数据时返回空读数, 不合成"合理"假数据"""
+        hw = SimHardwareInterface({'backend': 'sim'})
+        hw.initialize()
+        readings = hw.get_sensor_readings()
+        # 未注入 -> 空, 而不是带噪声的合成数据
+        self.assertEqual(len(readings.lidar_ranges), 0)
+        self.assertFalse(hw.get_health().lidar_ready)
+
+    def test_sim_command_forwarding(self):
+        """P0-4: sim 后端把速度命令转发给外部仿真器 sink"""
+        received = []
+        hw = SimHardwareInterface(
+            {'backend': 'sim', 'motion': {'accel_limit': 100.0}})
+        hw.initialize()
+        hw.set_command_sink(lambda vx, vy, wz: received.append((vx, vy, wz)))
+        hw.enable_motors(True)
+        # 基类 send_velocity 带加速度限幅 (dt 下限 1ms), 需连续多帧才收敛到目标;
+        # 这本身是正确行为, 因此按真实控制环连续发送而非期望单帧到位
+        for _ in range(5):
+            hw.send_velocity(0.2, 0.0, 0.1)
+        self.assertGreaterEqual(len(received), 1)
+        # 每一帧都转发给外部仿真器
+        self.assertEqual(len(received), 5)
+        # 末帧应收敛到目标速度
+        self.assertAlmostEqual(received[-1][0], 0.2, places=3)
+        self.assertTrue(hw.sim_connected)
+
+    def test_default_backend_is_mock(self):
+        """P0-4: 默认后端由 sim 改为 mock (诚实默认, 无外部执行器)"""
+        hw = HardwareInterface.create({})
+        self.assertIsInstance(hw, MockHardwareInterface)
 
     def test_unknown_backend_raises(self):
         """未知 backend 应抛出 ValueError"""

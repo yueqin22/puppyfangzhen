@@ -153,6 +153,71 @@ def main(argv=None):
             _dump(report, args.report)
             return 2
 
+        # 4. P0-4: 契约 adapter 段 vs adapter_params.yaml 一致
+        #    cmd_vel 超时与运动限速必须是单一真源, 防止 ROS2 参数与契约漂移
+        #    (契约 adapter.cmd_vel_timeout_sec <-> adapter_params.yaml cmd_timeout)
+        contract_adapter = (data.get("adapter") or {}) if data else {}
+        if contract_adapter:
+            adapter_mism = []
+            # 契约字段 -> (参数文件里的键名, 契约键名)
+            key_map = [
+                ("cmd_vel_timeout_sec", "cmd_timeout"),
+                ("max_linear_x", "max_linear_x"),
+                ("max_linear_y", "max_linear_y"),
+                ("max_angular_z", "max_angular_z"),
+            ]
+            adapter_files = [
+                os.path.join("src", "puppypi_adapter", "config",
+                             "adapter_params.yaml"),
+                os.path.join("cpp_src", "puppypi_adapter", "config",
+                             "adapter_params.yaml"),
+            ]
+            checked_adapter = {}
+            for rel in adapter_files:
+                path = os.path.join(_ROOT, rel)
+                if not os.path.exists(path):
+                    continue
+                try:
+                    import yaml
+                    with open(path, encoding="utf-8") as af:
+                        doc = yaml.safe_load(af) or {}
+                except Exception as e:  # noqa: BLE001
+                    report.setdefault("adapter_errors", []).append(
+                        "%s: %s" % (rel, e))
+                    continue
+                params = ((doc.get("motion_adapter") or {})
+                          .get("ros__parameters") or {})
+                if not params:
+                    continue
+                for ckey, pkey in key_map:
+                    cv = contract_adapter.get(ckey)
+                    pv = params.get(pkey)
+                    if not isinstance(cv, (int, float)) or \
+                            not isinstance(pv, (int, float)):
+                        continue
+                    checked_adapter.setdefault(rel, {})[pkey] = pv
+                    report["checked_files"].append("%s:%s" % (rel, pkey))
+                    if abs(float(cv) - float(pv)) > 1e-9:
+                        adapter_mism.append({
+                            "file": "%s:%s" % (rel, pkey),
+                            "value": float(pv),
+                            "contract_value": float(cv),
+                        })
+            report["adapter_consistency"] = {
+                "contract": {k: contract_adapter.get(k)
+                             for k, _ in key_map
+                             if k in contract_adapter},
+                "params": checked_adapter,
+            }
+            report["adapter_mismatches"] = adapter_mism
+            if adapter_mism:
+                report["cross_config_pass"] = False
+                report["status"] = "FAIL"
+                report["exit_code"] = 2
+                report["summary"] = "adapter 参数与契约不一致: %d 处" % len(adapter_mism)
+                _dump(report, args.report)
+                return 2
+
         report["status"] = "PASS"
         report["exit_code"] = 0
         report["summary"] = "契约合法, %d 个配置/场景 robot.radius 一致 (%.3f)" % (

@@ -229,9 +229,15 @@ class HardwareInterface(abc.ABC):
         """根据配置创建硬件接口实例
 
         根据 config['backend'] 选择:
-            - 'sim' / 'simulation': 仿真实现
-            - 'real' / 'puppypi': PuppyPi 实体机实现
-            - 'mock': 纯Python mock (无外部依赖)
+            - 'sim' / 'simulation': 仿真实现 (后端缺失时 fail-fast)
+            - 'real' / 'puppypi': PuppyPi 实体机实现 (缺 SDK 时 fail-fast)
+            - 'mock': 纯Python mock (无外部依赖), 也是默认后端
+
+        P0-4 诚实可用约束:
+            sim/real 初始化失败时**不静默回退**到 mock。回退会掩盖"配置为仿真、
+            实际跑在 mock 上"的严重不一致 (mode_adapter 曾因此日志显示 [SIM]
+            而实际无执行器)。默认 backend 由 'sim' 改为 'mock', 使默认行为与
+            "无外部执行器"的真实语义一致。
 
         Args:
             config: 配置字典
@@ -241,16 +247,15 @@ class HardwareInterface(abc.ABC):
 
         Raises:
             ValueError: 未知 backend
+            ImportError: sim/real 后端模块缺失 (fail-fast, 不回退)
         """
-        backend = (config or {}).get('backend', 'sim').lower()
+        # P0-4: 默认 backend 为 mock (诚实默认). 禁止 sim/real 静默回退 mock:
+        # 上层若显式配置 allow_backend_fallback=true 才允许回退, 且必须记录回退事件.
+        backend = (config or {}).get('backend', 'mock').lower()
         if backend in ('sim', 'simulation', 'coppelia'):
-            try:
-                from .sim_interface import SimHardwareInterface
-                return SimHardwareInterface(config)
-            except ImportError:
-                # sim_interface 未安装时回退到 mock
-                from .mock_interface import MockHardwareInterface
-                return MockHardwareInterface(config)
+            # fail-fast: sim 后端未实现/未安装必须显式报错, 不得伪装成 mock
+            from .sim_interface import SimHardwareInterface
+            return SimHardwareInterface(config)
         elif backend in ('real', 'puppypi', 'hardware'):
             from .puppypi_driver import PuppyPiHardwareInterface
             return PuppyPiHardwareInterface(config)
