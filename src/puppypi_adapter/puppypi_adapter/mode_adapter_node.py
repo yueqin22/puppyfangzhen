@@ -22,7 +22,9 @@ class ModeAdapterNode(Node):
 
         # P0-3: 仿真/真机模式开关
         self.declare_parameter('use_sim', True)
+        self.declare_parameter('backend', '')
         self.use_sim = self.get_parameter('use_sim').value
+        configured_backend = str(self.get_parameter('backend').value or '').strip().lower()
 
         self.current_posture = 'UNKNOWN'
         self.motion_enabled = False
@@ -38,7 +40,7 @@ class ModeAdapterNode(Node):
         # use_sim=True -> backend 'sim' (外部仿真器拥有动力学, 本节点只发命令与
         # 使能/急停; 传感器数据由仿真器经 ROS topic 注入, 见 sim_interface.py)。
         # 这与 'mock'(进程内自成体系的假动力学) 语义不同, 不得混用。
-        self.backend_requested = 'sim' if self.use_sim else 'real'
+        self.backend_requested = configured_backend or ('sim' if self.use_sim else 'real')
         self.backend_actual = None
 
         try:

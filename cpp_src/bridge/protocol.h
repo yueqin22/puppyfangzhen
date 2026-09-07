@@ -25,8 +25,17 @@
 #  include <ws2tcpip.h>
 #else
 #  include <sys/socket.h>
+#  include <netinet/in.h>
+#  include <arpa/inet.h>
+#  include <sys/select.h>
 #  include <unistd.h>
 #  include <cerrno>
+
+using SOCKET = int;
+constexpr int INVALID_SOCKET = -1;
+constexpr int SOCKET_ERROR = -1;
+inline int closesocket(int s) { return ::close(s); }
+inline int WSAGetLastError() { return errno; }
 #endif
 
 namespace bridge {
@@ -455,6 +464,11 @@ struct Link {
 struct WinSockInit {
     WinSockInit() { WSADATA wsa; WSAStartup(MAKEWORD(2, 2), &wsa); }
     ~WinSockInit() { WSACleanup(); }
+};
+#else
+struct WinSockInit {
+    WinSockInit() {}
+    ~WinSockInit() {}
 };
 #endif
 

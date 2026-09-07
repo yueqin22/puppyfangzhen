@@ -41,8 +41,11 @@ _ROOT = os.path.dirname(_HERE)
 def find_bridge(explicit=None):
     if explicit:
         return explicit if os.path.exists(explicit) else None
-    p = os.path.join(_ROOT, "cpp_src", "bridge", "nav_ue_bridge_test.exe")
-    return p if os.path.exists(p) else None
+    for name in ("nav_ue_bridge_test", "nav_ue_bridge_test.exe", "nav_ue_bridge", "nav_ue_bridge.exe"):
+        p = os.path.join(_ROOT, "cpp_src", "bridge", name)
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def build(type_, payload, seq, version=PROTOCOL_VERSION):

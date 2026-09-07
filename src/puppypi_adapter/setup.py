@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name + '/config', [
             'config/adapter_params.yaml',
             'config/full_system_adapter_params.yaml',
+            'config/mock_adapter_params.yaml',
         ]),
         ('share/' + package_name + '/launch', ['launch/adapter_bringup.launch.py']),
     ],

@@ -27,6 +27,33 @@ export PUPPY_WS=~/puppy_ws
 - Gazebo/RViz 打开后会作为 **Windows 窗口显示出来**，但它们本质上是 WSL 里的 Linux GUI 程序，不会显示在当前 PowerShell 终端里。
 - 在当前机器上，WSLg 下的 Gazebo 窗口可能显示为 **`Gazebo (Ubuntu-22.04)`**，宿主进程是 `msrdc.exe`，不一定能在 Windows 任务管理器里直接看到 `gzclient.exe` 这样的标题。
 
+## 四个标准运行入口 (jihua20260905.md §6.1)
+
+项目严格收敛为四个权威入口，杜绝接口混乱与静默降级：
+
+| 入口 | 启动命令 | 后端说明 | 适用场景 | 物理/碰撞 |
+|---|---|---|---|---|
+| **1. `mock + core`** | `ros2 launch puppy_bringup mock_system.launch.py` | 纯软件 Mock 传感器与控制面，无 Gazebo | 接口契约、状态机、故障注入、CI 单测 | 虚拟 |
+| **2. `Gazebo + Nav2 + core`** | `ros2 launch puppy_bringup full_system.launch.py` | WSL/ROS2 Humble 完整导航与仿真软件闭环 | Gazebo 仿真、Nav2 路径规划、TF/SLAM 联调 | Gazebo 物理 |
+| **3. `C++/UE5 bridge`** | `bash scripts/run_regression.sh` 或 `./cpp_src/bridge/nav_ue_bridge` | C++ 高性能仿真基准 + UE5 TCP 协议 v2 桥接 | 论文基准实验、多种子回归、三维数字孪生可视化 | 离线真值 / UE5 碰撞 |
+| **4. `PuppyPi real + core`** | `ros2 launch puppypi_adapter adapter_bringup.launch.py params_file:=...` | 树莓派 4B + PuppyPi SDK 实体机驱动 | 硬件实测；缺硬件或预检未过时 **Fail-Fast** 退出 | 实体硬件 |
+
+### WSL 一键复现与门禁校验 (jihua20260905.md §6.3)
+
+在 WSL 中执行一键全自动化同步、编译、回归和冒烟校验：
+```bash
+bash /mnt/e/puppyfangzhen/scripts/reproduce_wsl.sh
+```
+该脚本会自动：
+1. 检查 ROS2 Humble 环境与 Python/C++ 工具链；
+2. 校验 Windows 宿主与 WSL 工作空间源码差异并同步；
+3. 执行 `colcon build --symlink-install`；
+4. 运行全量测试回归门禁 (`run_regression.sh`)；
+5. 启动 `mock + core` 闭环，对 `/platform/health`、`/battery_status` 等关键话题实施 payload 级消息探针；
+6. 生成可归档复现报告至 `artifacts/wsl_reproduce_<timestamp>/`。
+
+---
+
 ## 快速开始
 
 ### 1. 在 Windows 中打开 WSL
@@ -226,7 +253,7 @@ bash scripts/clean_artifacts.sh --apply
 - 校验激活档合法: `python scripts/check_profile.py` (非法退出非零)。
 - 发布门禁: `python scripts/check_profile.py --assert-release` 仅 `release` 且
   `enforce_single_source=true` 时通过。
-- 文档一致性(§13 风险#8): `python scripts/check_docs_consistency.py` 扫描旧房间数/旧半径/Jazzy 混写。
+- 文档一致性(§13 风险#8): `python scripts/check_docs_consistency.py` 扫描旧房间数/旧半径/过时发行版混写。
 - 一键发布报告(§9.3): `python scripts/gen_release_report.py --run-id <id>` 聚合
   `artifacts/cpp_*_seedN_planB.json` → `artifacts/<id>/` (summary.md + plots/)。
 - 全量回归: `bash scripts/run_regression.sh` (已接入上述门禁, 15/15 ALL GREEN)。

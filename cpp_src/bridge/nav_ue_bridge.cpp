@@ -1982,7 +1982,11 @@ if (max_frames <= 0) max_frames = 36000;  // [comment stripped: encoding-corrupt
         timeval tv;
         tv.tv_sec = connect_timeout;
         tv.tv_usec = 0;
+#ifdef _WIN32
         int sel = select(0, &rfds, nullptr, nullptr, &tv);
+#else
+        int sel = select(static_cast<int>(server) + 1, &rfds, nullptr, nullptr, &tv);
+#endif
         if (sel <= 0) {
             printf("[Bridge][TIMEOUT] no UE client within %ds; exiting\n", connect_timeout);
             fflush(stdout);
@@ -2509,7 +2513,11 @@ if (max_frames <= 0) max_frames = 36000;  // [comment stripped: encoding-corrupt
 
     if (g_link.valid()) {
         g_link.send_sim_end();
+#ifdef _WIN32
         Sleep(100);
+#else
+        usleep(100000);
+#endif
     }
     if (g_link.sock >= 0) closesocket(static_cast<SOCKET>(g_link.sock));
     closesocket(server);

@@ -159,6 +159,23 @@ class PuppyPiHardwareInterface(HardwareInterface):
             # 5. 初始化 GPIO (急停按钮 + LED)
             self._init_gpio()
 
+            # ``real`` is an explicit deployment mode, not a best-effort
+            # hardware probe. Synthetic sensor values invalidate evidence, so
+            # fail before starting any control thread when hardware is absent.
+            missing = []
+            for name, handle in (
+                    ('puppypi_sdk', self._sdk),
+                    ('lidar', self._lidar),
+                    ('imu', self._imu),
+                    ('adc', self._adc),
+                    ('gpio', self._gpio)):
+                if handle is None:
+                    missing.append(name)
+            if missing:
+                raise RuntimeError(
+                    'real backend hardware preflight failed; missing: '
+                    + ', '.join(missing))
+
             # 6. 启动后台线程
             self._running = True
             self._sensor_thread = threading.Thread(
@@ -182,6 +199,12 @@ class PuppyPiHardwareInterface(HardwareInterface):
         except Exception as e:
             logger.error(f"PuppyPi 硬件初始化失败: {e}")
             self._last_error = str(e)
+            # Close partially initialized devices; returning False remains a
+            # hard failure for the real backend and never implies mock mode.
+            try:
+                self.shutdown()
+            except Exception as cleanup_error:  # noqa: BLE001
+                logger.error(f"PuppyPi cleanup after failed init failed: {cleanup_error}")
             return False
 
     def shutdown(self):

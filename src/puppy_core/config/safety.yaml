@@ -16,9 +16,13 @@ safety_manager:
     max_linear_x: 0.3
     max_angular_z: 1.2
 
-# 以下字段保留给其他节点或离线参考，不直接由 safety_manager 读取
-safety:
-  fall_detection_enabled: true
-  fall_recovery_auto: false  # require manual confirmation
-  max_recovery_attempts: 3
-  safe_stop_on_driver_error: true
+    fall_detection_enabled: true
+    fall_recovery_auto: false  # require manual confirmation
+    max_recovery_attempts: 3
+    safe_stop_on_driver_error: true
+
+battery_status_adapter:
+  ros__parameters:
+    low_battery_threshold: 0.20
+    critical_battery_threshold: 0.10
+

@@ -102,14 +102,19 @@ def _run(cmd, cwd):
 
 
 def _find_bridge():
-    """定位 nav_ue_bridge.exe; 未编译返回 None (诚实标记 not-measured)。"""
-    cands = [
-        os.path.join(_ROOT, "cpp_src", "bridge", "build", "Release", "nav_ue_bridge.exe"),
-        os.path.join(_ROOT, "cpp_src", "bridge", "build", "nav_ue_bridge.exe"),
-        os.path.join(_ROOT, "cpp_src", "bridge", "nav_ue_bridge.exe"),
-    ]
+    """定位 nav_ue_bridge / nav_ue_bridge.exe; 未编译返回 None (诚实标记 not-measured)。"""
+    if sys.platform != "win32":
+        names = ["nav_ue_bridge"]
+    else:
+        names = ["nav_ue_bridge.exe", "nav_ue_bridge"]
+    cands = []
+    for d in (os.path.join(_ROOT, "cpp_src", "bridge", "build", "Release"),
+              os.path.join(_ROOT, "cpp_src", "bridge", "build"),
+              os.path.join(_ROOT, "cpp_src", "bridge")):
+        for n in names:
+            cands.append(os.path.join(d, n))
     for c in cands:
-        if os.path.exists(c):
+        if os.path.exists(c) and (os.access(c, os.X_OK) or sys.platform == "win32"):
             return c
     return None
 
@@ -203,8 +208,21 @@ def main(argv=None):
         [sys.executable, "scripts/check_motion_capability.py",
          "--report", os.path.join(out_dir, "motion_capability.json")],
         cwd=_ROOT)
-    with open(os.path.join(out_dir, "motion_capability.txt"), "w", encoding="utf-8") as f:
-        f.write(out_mc)
+    # ---- cmdvel_arbitration.json (§4 P0-4) ----
+    rc_ca, out_ca = _run(
+        [sys.executable, "scripts/check_cmdvel_arbitration.py",
+         "--report", os.path.join(out_dir, "cmdvel_arbitration.json")],
+        cwd=_ROOT)
+    with open(os.path.join(out_dir, "cmdvel_arbitration.txt"), "w", encoding="utf-8") as f:
+        f.write(out_ca)
+
+    # ---- docs_consistency.json (§13) ----
+    rc_dc, out_dc = _run(
+        [sys.executable, "scripts/check_docs_consistency.py",
+         "--report", os.path.join(out_dir, "docs_consistency.json")],
+        cwd=_ROOT)
+    with open(os.path.join(out_dir, "docs_consistency.txt"), "w", encoding="utf-8") as f:
+        f.write(out_dc)
 
     # ---- python_pytest.json ----
     # 仓库根无 pytest 配置, 直接 `pytest -q` 会扫到全仓其它不可跑的 test_*.py
@@ -352,15 +370,19 @@ def main(argv=None):
             "scene_validation": "python scripts/validate_scene.py",
             "geometry_consistency": "python scripts/check_geometry_consistency.py",
             "motion_capability": "python scripts/check_motion_capability.py",
+            "cmdvel_arbitration": "python scripts/check_cmdvel_arbitration.py",
+            "docs_consistency": "python scripts/check_docs_consistency.py",
             "python_pytest": "python -m pytest -q (suite: src/puppy_minicpm_robot/test)",
             "cpp_results": "冻结 artifacts/cpp_*_planB.json (不重跑, 见 cpp_results.json)",
-            "ue_bridge_checks": "nav_ue_bridge.exe --help / --check-scene",
+            "ue_bridge_checks": "nav_ue_bridge --help / --check-scene",
         },
         "exit_codes": {
             "config_consistency": rc,
             "scene_validation": rc_s,
             "geometry_consistency": rc_g,
             "motion_capability": rc_mc,
+            "cmdvel_arbitration": rc_ca,
+            "docs_consistency": rc_dc,
             "python_pytest": rc_t,
             "ue_bridge_check_scene": rc_b,
         },

@@ -11,11 +11,16 @@
 # 依赖: scripts/msvc_env.sh (MSVC 2022 x64 工具链)
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd -W)"
+# Git Bash provides ``pwd -W`` while WSL/System bash does not.  Prefer the
+# Windows spelling when available (MSVC accepts it), otherwise retain the
+# native POSIX path for WSL/ROS2.
+ROOT="$(cd "$(dirname "$0")/.." && (pwd -W 2>/dev/null || pwd))"
 cd "$ROOT"
 source "$ROOT/scripts/msvc_env.sh"
 
-CL="$VCT/bin/Hostx64/x64/cl.exe"
+# msvc_env.sh puts the compiler on PATH using MSYS-compatible paths.  Calling
+# it by name avoids the native `C:/Program Files/...` quoting trap in Git Bash.
+CL="${CL:-cl.exe}"
 SIM_DIR="$ROOT/cpp_src/sim"
 BRIDGE_DIR="$ROOT/cpp_src/bridge"
 ART="$ROOT/artifacts"
@@ -62,26 +67,39 @@ echo " clang: $CL"
 echo "================================================================"
 
 # ---- 1) 编译 sim_test ----
+# ---- 1) 编译 sim_test ----
 echo "== [build] sim_test =="
-( cd "$SIM_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT \
-    /I../puppy_nav_core/include /I. /I../common \
-    main.cpp \
-    ../puppy_nav_core/src/occupancy_grid.cpp \
-    ../puppy_nav_core/src/costmap.cpp \
-    ../puppy_nav_core/src/astar_planner.cpp \
-    ../puppy_nav_core/src/amcl.cpp \
-    ../puppy_nav_core/src/path_validator.cpp \
-    /Fe:build/Release/sim_test.exe \
-    /link /OUT:build/Release/sim_test.exe ) >/dev/null 2>&1
-if [ $? -ne 0 ]; then echo "[FAIL] sim_test build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+if command -v "$CL" >/dev/null 2>&1; then
+    ( cd "$SIM_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT \
+        /I../puppy_nav_core/include /I. /I../common \
+        main.cpp \
+        ../puppy_nav_core/src/occupancy_grid.cpp \
+        ../puppy_nav_core/src/costmap.cpp \
+        ../puppy_nav_core/src/astar_planner.cpp \
+        ../puppy_nav_core/src/amcl.cpp \
+        ../puppy_nav_core/src/path_validator.cpp \
+        /Fe:build/Release/sim_test.exe \
+        /link /OUT:build/Release/sim_test.exe ) >/dev/null 2>&1
+    if [ $? -ne 0 ]; then echo "[FAIL] sim_test build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+elif command -v g++ >/dev/null 2>&1; then
+    ( cd "$SIM_DIR" && g++ -O2 -std=c++17 \
+        -I../puppy_nav_core/include -I. -I../common \
+        main.cpp \
+        ../puppy_nav_core/src/occupancy_grid.cpp \
+        ../puppy_nav_core/src/costmap.cpp \
+        ../puppy_nav_core/src/astar_planner.cpp \
+        ../puppy_nav_core/src/amcl.cpp \
+        ../puppy_nav_core/src/path_validator.cpp \
+        -o sim_test ) >/dev/null 2>&1
+    if [ $? -ne 0 ]; then echo "[FAIL] sim_test build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+else
+    echo "[FAIL] no compiler (neither cl.exe nor g++ found)"; BUILD_FAIL=$((BUILD_FAIL+1))
+fi
 
 # ---- 2) 编译 nav_ue_bridge ----
 # 同一份源码产出两个可执行文件:
-#   nav_ue_bridge.exe       生产入口 (接真实 UE)
-#   nav_ue_bridge_test.exe  §5.1/§5.2 复验用的同源码副本
-#     为什么单独再编一份: verify_bridge_handshake.py 会主动连 7777 端口并断言
-#     无客户端超时/静默急停, 与人工启动的 UE 会话抢端口。给它独立文件名, 是为了
-#     让"门禁跑的 bridge"与"演示跑的 bridge"可区分, 而不是靠约定不冲突。
+#   nav_ue_bridge           生产入口 (接真实 UE)
+#   nav_ue_bridge_test      §5.1/§5.2 复验用的同源码副本
 echo "== [build] nav_ue_bridge =="
 BRIDGE_SRC="nav_ue_bridge.cpp \
     ../puppy_nav_core/src/occupancy_grid.cpp \
@@ -89,24 +107,55 @@ BRIDGE_SRC="nav_ue_bridge.cpp \
     ../puppy_nav_core/src/astar_planner.cpp \
     ../puppy_nav_core/src/amcl.cpp \
     ../puppy_nav_core/src/path_validator.cpp"
-( cd "$BRIDGE_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT /DNOMINMAX \
-    /I. /I../sim /I../puppy_nav_core/include /I../common \
-    $BRIDGE_SRC \
-    /Fe:build/Release/nav_ue_bridge.exe \
-    /link /OUT:build/Release/nav_ue_bridge.exe ws2_32.lib ) >/dev/null 2>&1
-if [ $? -ne 0 ]; then echo "[FAIL] nav_ue_bridge build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+if command -v "$CL" >/dev/null 2>&1; then
+    ( cd "$BRIDGE_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT /DNOMINMAX \
+        /I. /I../sim /I../puppy_nav_core/include /I../common \
+        $BRIDGE_SRC \
+        /Fe:build/Release/nav_ue_bridge.exe \
+        /link /OUT:build/Release/nav_ue_bridge.exe ws2_32.lib ) >/dev/null 2>&1
+    if [ $? -ne 0 ]; then echo "[FAIL] nav_ue_bridge build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
 
-( cd "$BRIDGE_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT /DNOMINMAX \
-    /I. /I../sim /I../puppy_nav_core/include /I../common \
-    $BRIDGE_SRC \
-    /Fe:build/Release/nav_ue_bridge_test.exe \
-    /link /OUT:build/Release/nav_ue_bridge_test.exe ws2_32.lib ) >/dev/null 2>&1
-if [ $? -ne 0 ]; then echo "[FAIL] nav_ue_bridge_test build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+    ( cd "$BRIDGE_DIR" && "$CL" /O2 /std:c++17 /EHsc /utf-8 /MT /DNOMINMAX \
+        /I. /I../sim /I../puppy_nav_core/include /I../common \
+        $BRIDGE_SRC \
+        /Fe:build/Release/nav_ue_bridge_test.exe \
+        /link /OUT:build/Release/nav_ue_bridge_test.exe ws2_32.lib ) >/dev/null 2>&1
+    if [ $? -ne 0 ]; then echo "[FAIL] nav_ue_bridge_test build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+elif command -v g++ >/dev/null 2>&1; then
+    ( cd "$BRIDGE_DIR" && g++ -O2 -std=c++17 \
+        -I. -I../sim -I../puppy_nav_core/include -I../common \
+        $BRIDGE_SRC \
+        -o nav_ue_bridge && cp nav_ue_bridge nav_ue_bridge_test ) >/dev/null 2>&1
+    if [ $? -ne 0 ]; then echo "[FAIL] nav_ue_bridge build"; BUILD_FAIL=$((BUILD_FAIL+1)); fi
+fi
 
-SIM="$SIM_DIR/build/Release/sim_test.exe"
-BR="$BRIDGE_DIR/build/Release/nav_ue_bridge.exe"
-BRT="$BRIDGE_DIR/build/Release/nav_ue_bridge_test.exe"
+# 自动解析编译产物 (兼容 Windows .exe 与 Linux ELF)
+if [ "$(uname -s)" = "Linux" ]; then
+    SIM="${SIM_DIR}/sim_test"
+    BR="${BRIDGE_DIR}/nav_ue_bridge"
+    BRT="${BRIDGE_DIR}/nav_ue_bridge_test"
+else
+    if [ -x "$SIM_DIR/build/Release/sim_test.exe" ]; then
+        SIM="$SIM_DIR/build/Release/sim_test.exe"
+    else
+        SIM="$SIM_DIR/sim_test.exe"
+    fi
+
+    if [ -x "$BRIDGE_DIR/build/Release/nav_ue_bridge.exe" ]; then
+        BR="$BRIDGE_DIR/build/Release/nav_ue_bridge.exe"
+    else
+        BR="$BRIDGE_DIR/nav_ue_bridge.exe"
+    fi
+
+    if [ -x "$BRIDGE_DIR/build/Release/nav_ue_bridge_test.exe" ]; then
+        BRT="$BRIDGE_DIR/build/Release/nav_ue_bridge_test.exe"
+    else
+        BRT="$BRIDGE_DIR/nav_ue_bridge_test.exe"
+    fi
+fi
+
 SC="$ROOT/config/scene_home.json"
+export SCENE_JSON="$SC"
 
 # ---- 3) C++ 冒烟 (300 帧, 安全门控, exit 0) ----
 echo "== [test] cpp_smoke =="
@@ -173,6 +222,14 @@ echo "== [test] motion_capability =="
 "$PY" "$ROOT/scripts/check_motion_capability.py" --report "$ART/motion_capability.json" >/dev/null 2>&1
 report "motion_capability (exit 0)" 0 $?
 
+# ---- 10b2) /cmd_vel 单一仲裁者 (§4 P0-4 / §13 风险: 多套脚本同时发速度) ----
+# 分层: 意图层 -> /cmd_vel -> safety_manager(唯一仲裁) -> /cmd_vel_safe -> 执行层。
+# 任何非仲裁者发布 /cmd_vel_safe 即"绕过安全闸门"(电机使能/限速/低电量/跌倒/超时),
+# 历史真实缺陷: track_cmd_adapter 曾未抑制指令速度直发该话题。
+echo "== [test] cmdvel_arbitration =="
+"$PY" "$ROOT/scripts/check_cmdvel_arbitration.py" --report "$ART/cmdvel_arbitration.json" >/dev/null 2>&1
+report "cmdvel_arbitration (exit 0)" 0 $?
+
 # ---- 10c) 运行 Profile 有效性 (§11 第 1 周出口) ----
 # 激活 profile 必须定义在 unified_params.yaml 的 profiles: 中, 且 nav_core 不得为 mock。
 echo "== [test] profile_validity =="
@@ -224,7 +281,7 @@ if [ "${SKIP_PYTEST:-0}" = "1" ]; then
     echo "[SKIP] python_pytest (SKIP_PYTEST=1)"
 else
     ( cd "$ROOT/src/puppy_minicpm_robot" && \
-      PYTHONPATH=".$PYTHONPATH" \
+      PYTHONPATH=".${PYTHONPATH:-}" \
       "$PY" -m pytest test -q --no-header -p no:cacheprovider ) \
         >"$ART/python_pytest.txt" 2>&1
     report "python_pytest (exit 0)" 0 $?

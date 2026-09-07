@@ -8,6 +8,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <functional>
+#include <cstdint>
 
 namespace puppy_sim {
 

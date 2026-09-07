@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <cmath>
+#include <cstring>
 
 namespace mini_json {
 

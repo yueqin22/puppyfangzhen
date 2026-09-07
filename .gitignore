@@ -5,6 +5,9 @@
 *.pdb
 *.ilk
 *.exp
+cpp_src/sim/sim_test
+cpp_src/bridge/nav_ue_bridge
+cpp_src/bridge/nav_ue_bridge_test
 
 # Python cache
 __pycache__/

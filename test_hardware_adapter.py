@@ -124,6 +124,18 @@ class TestHardwareInterface(unittest.TestCase):
         hw = HardwareInterface.create({})
         self.assertIsInstance(hw, MockHardwareInterface)
 
+    def test_real_backend_fails_fast_without_hardware(self):
+        """P0-4 / Task 8: real 后端缺少硬件 SDK 时必须 fail-fast，严禁静默回退到 mock"""
+        from puppypi_adapter.puppypi_driver import PuppyPiHardwareInterface
+        hw = HardwareInterface.create({'backend': 'real'})
+        self.assertIsInstance(hw, PuppyPiHardwareInterface)
+        self.assertNotIsInstance(hw, MockHardwareInterface)
+        # 在非树莓派或缺少硬件环境下，initialize 必须返回 False 且记录错误，不能静默假装成功
+        success = hw.initialize()
+        self.assertFalse(success)
+        self.assertFalse(hw._initialized)
+        self.assertIn('preflight failed', hw._last_error.lower())
+
     def test_unknown_backend_raises(self):
         """未知 backend 应抛出 ValueError"""
         with self.assertRaises(ValueError):
@@ -960,6 +972,16 @@ class TestStabilitySimLoopException(unittest.TestCase):
 @unittest.skipUnless(_HAS_RCLPY, "requires rclpy (ROS2 Python)")
 class TestAdapterNodes(unittest.TestCase):
     """测试 StatusAdapterNode 与 ModeAdapterNode 节点封装"""
+
+    @classmethod
+    def setUpClass(cls):
+        if _HAS_RCLPY and not rclpy.ok():
+            rclpy.init()
+
+    @classmethod
+    def tearDownClass(cls):
+        if _HAS_RCLPY and rclpy.ok():
+            rclpy.shutdown()
 
     def test_status_adapter_12_dof(self):
         """测试 StatusAdapterNode 包含 12 DOF 关节视角"""

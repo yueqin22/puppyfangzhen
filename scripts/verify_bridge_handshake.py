@@ -48,8 +48,11 @@ def find_bridge(explicit=None):
     if explicit:
         return explicit if os.path.exists(explicit) else None
     for rel in (
+        os.path.join("cpp_src", "bridge", "nav_ue_bridge_test"),
         os.path.join("cpp_src", "bridge", "nav_ue_bridge_test.exe"),
+        os.path.join("cpp_src", "bridge", "build", "Release", "nav_ue_bridge"),
         os.path.join("cpp_src", "bridge", "build", "Release", "nav_ue_bridge.exe"),
+        os.path.join("cpp_src", "bridge", "nav_ue_bridge"),
         os.path.join("cpp_src", "bridge", "nav_ue_bridge.exe"),
     ):
         p = os.path.join(_ROOT, rel)

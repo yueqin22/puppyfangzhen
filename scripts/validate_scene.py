@@ -32,6 +32,10 @@ import sys
 DEFAULT_SCENE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "config", "scene_home.json")
 DEFAULT_UE = r"D:\puppy_ue\Source\PuppyNav\PuppyRobotPawn.cpp"
+if not os.path.exists(DEFAULT_UE):
+    wsl_candidate = "/mnt/d/puppy_ue/Source/PuppyNav/PuppyRobotPawn.cpp"
+    if os.path.exists(wsl_candidate):
+        DEFAULT_UE = wsl_candidate
 
 REQUIRED_TOP = ["version", "grid", "robot", "lidar", "amcl", "obstacles",
                 "patrol_targets", "pedestrians", "rooms"]

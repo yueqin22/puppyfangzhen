@@ -245,7 +245,13 @@ def main():
         for fp in glob.glob(os.path.join(ART, "cpp_*_seed1_planB.json")):
             pre = os.path.basename(fp).split("_seed1")[0]
             seen.add(pre)
-        prefixes = sorted(seen)
+        # Release 验收门禁以长稳回归数据 (cpp_36000 / cpp_108000) 为准;
+        # 存在长跑数据时默认不混入短跑诊断 (cpp_300/3600), 除非通过 --cpp-prefix 显式指定
+        long_runs = [p for p in seen if p in ("cpp_36000", "cpp_108000")]
+        if long_runs:
+            prefixes = sorted(long_runs)
+        else:
+            prefixes = sorted(seen)
     if not prefixes:
         print("[gen_release_report] 未找到任何 cpp_*_seedN_planB.json, 退出", file=sys.stderr)
         return 2
@@ -450,7 +456,11 @@ def main():
     print("  前缀: %s" % ", ".join("%s×%d" % (p, meta["seeds_per_prefix"][p]) for p in prefixes))
     print("  总判定: %s" % ("PASS" if passed else "NEEDS WORK"))
     for label, _, worst, thr, unit, ok in gate_results:
-        print("    %s %s %s %s -> %s" % ("✓" if ok else "✗", label, fmtv(worst), unit, "PASS" if ok else "FAIL"))
+        # Keep console output ASCII-safe on Windows PowerShell/GBK.  The
+        # report itself remains UTF-8 and contains the full localized text.
+        print("    %s %s %s %s -> %s" % ("[PASS]" if ok else "[FAIL]", label,
+                                          fmtv(worst), unit,
+                                          "PASS" if ok else "FAIL"))
     return 0 if passed else 1
 
 
