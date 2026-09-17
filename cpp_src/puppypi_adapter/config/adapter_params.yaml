@@ -11,6 +11,8 @@ motion_adapter:
 status_adapter:
   ros__parameters:
     use_sim: true
+    backend: sim
+    allow_backend_fallback: false
     publish_raw_battery: true
     publish_semantic_battery: true
     battery_drain_per_tick: 0.0002
@@ -18,4 +20,3 @@ status_adapter:
 mode_adapter:
   ros__parameters:
     use_sim: true
-

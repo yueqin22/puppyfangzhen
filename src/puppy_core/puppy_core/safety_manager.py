@@ -48,6 +48,10 @@ class SafetyManagerNode(Node):
         self.create_subscription(BatteryStatus, '/battery_status', self._on_battery, 10)
         self.create_subscription(FallEvent, '/fall/event', self._on_fall, 10)
         self.create_subscription(Bool, '/robot/motors_enable_request', self._on_motor_request, 10)
+        # 看门狗急停: 传感器失效/断链/心跳超时由 watchdog 判定后经此话题下达。
+        # 此前仲裁者未订阅它, 导致看门狗急停无法作用到执行器 (真实缺口)。
+        self.create_subscription(Bool, '/watchdog/emergency_stop',
+                                 self._on_emergency_stop, 10)
 
         # Safety check timer (20Hz)
         self.create_timer(0.05, self._safety_check)
@@ -66,6 +70,14 @@ class SafetyManagerNode(Node):
         safe_msg.linear.x = max(-self.max_linear_x, min(self.max_linear_x, msg.linear.x))
         safe_msg.angular.z = max(-self.max_angular_z, min(self.max_angular_z, msg.angular.z))
         self.safe_cmd_pub.publish(safe_msg)
+
+    def _on_emergency_stop(self, msg: Bool):
+        """看门狗急停: 立即断电机使能并输出零速度 (§4 P0-4 急停必须零速度)。"""
+        if msg.data:
+            self.get_logger().error('Watchdog EMERGENCY STOP -> SAFE_STOP')
+            self.motors_enabled = False
+            self.safe_cmd_pub.publish(Twist())
+            self._publish_motor_enable()
 
     def _on_battery(self, msg: BatteryStatus):
         """Monitor battery for safety thresholds."""

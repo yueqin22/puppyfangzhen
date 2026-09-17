@@ -38,10 +38,10 @@ navigation:
 # =====================================================================
 robot:
   radius: 0.35            # 机器人半径 (m)
-  max_linear_x: 0.5       # 最大线速度 (m/s)
-  max_angular_z: 1.0      # 最大角速度 (rad/s)
+  max_linear_x: 0.3       # 最大线速度 (m/s)
+  max_angular_z: 1.2      # 最大角速度 (rad/s)
   arrival_radius: 0.35    # 到达目标判定半径 (m)
-  cmd_timeout: 10         # 指令超时 (帧)
+  cmd_timeout: 1          # 指令超时 (s)
 
 # =====================================================================
 # AMCL 参数
@@ -69,7 +69,7 @@ amcl:
 # =====================================================================
 costmap:
   resolution: 0.1         # 栅格分辨率 (m/cell)
-  inflation_radius: 0.15  # 膨胀半径 (m) — 0.15 使 1m 门可通过
+  inflation_radius: 0.43  # = simulation_contract.planning.inflation_radius
   obstacle_threshold: 0.6 # log-odds 障碍物阈值
 
 # =====================================================================

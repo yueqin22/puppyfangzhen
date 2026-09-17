@@ -32,7 +32,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from config.config_loader import (
-    load_contract, validate_contract, _extract_robot_radius_yaml,
+    load_contract, validate_contract, _extract_robot_radius_yaml, parse_yaml,
 )
 
 
@@ -217,6 +217,55 @@ def main(argv=None):
                 report["summary"] = "adapter 参数与契约不一致: %d 处" % len(adapter_mism)
                 _dump(report, args.report)
                 return 2
+
+        # 5. The legacy unified_params.yaml is still consumed by a few
+        # analysis/C++ entry points.  It must mirror safety-owned values or a
+        # profile can silently run with a different speed/timeout/inflation.
+        unified_path = os.path.join(args.config_dir, "unified_params.yaml")
+        if os.path.exists(unified_path):
+            try:
+                with open(unified_path, encoding="utf-8") as uf:
+                    unified = parse_yaml(uf.read()) or {}
+                u_robot = unified.get("robot") or {}
+                u_costmap = unified.get("costmap") or {}
+                contract_checks = {
+                    "robot.max_linear_x": (u_robot.get("max_linear_x"),
+                                           contract_adapter.get("max_linear_x")),
+                    "robot.max_angular_z": (u_robot.get("max_angular_z"),
+                                             contract_adapter.get("max_angular_z")),
+                    "robot.cmd_timeout": (u_robot.get("cmd_timeout"),
+                                           contract_adapter.get("cmd_vel_timeout_sec")),
+                    "costmap.inflation_radius": (
+                        u_costmap.get("inflation_radius"),
+                        (data.get("planning") or {}).get("inflation_radius")),
+                }
+                unified_mismatches = []
+                report["unified_consistency"] = {}
+                for key, (actual, expected) in contract_checks.items():
+                    report["unified_consistency"][key] = {
+                        "value": actual, "contract_value": expected}
+                    if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+                        if abs(float(actual) - float(expected)) > 1e-9:
+                            unified_mismatches.append({
+                                "file": "config/unified_params.yaml:" + key,
+                                "value": actual, "contract_value": expected})
+                report["unified_mismatches"] = unified_mismatches
+                report["checked_files"].append("unified_params.yaml")
+                if unified_mismatches:
+                    report["cross_config_pass"] = False
+                    report["status"] = "FAIL"
+                    report["exit_code"] = 2
+                    report["summary"] = (
+                        "unified_params.yaml 与 simulation_contract.yaml 不一致: %d 项"
+                        % len(unified_mismatches))
+                    _dump(report, args.report)
+                    return 2
+            except Exception as e:  # noqa: BLE001
+                report["unified_error"] = str(e)
+                report["status"] = "FAIL"
+                report["exit_code"] = 3
+                _dump(report, args.report)
+                return 3
 
         report["status"] = "PASS"
         report["exit_code"] = 0

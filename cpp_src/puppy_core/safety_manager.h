@@ -34,6 +34,7 @@ class SafetyManagerNode : public rclcpp::Node {
   void onFall(const puppy_interfaces::msg::FallEvent::SharedPtr msg);
   // Handle motor enable/disable requests.
   void onMotorRequest(const std_msgs::msg::Bool::SharedPtr msg);
+  void onEmergencyStop(const std_msgs::msg::Bool::SharedPtr msg);
 
   // Periodic safety check - command timeout.
   void safetyCheck();
@@ -60,6 +61,7 @@ class SafetyManagerNode : public rclcpp::Node {
       battery_sub_;
   rclcpp::Subscription<puppy_interfaces::msg::FallEvent>::SharedPtr fall_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr motor_request_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr emergency_stop_sub_;
 
   rclcpp::TimerBase::SharedPtr timer_;
 };

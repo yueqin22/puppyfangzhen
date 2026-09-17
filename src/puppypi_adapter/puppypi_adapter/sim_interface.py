@@ -72,7 +72,10 @@ class SimHardwareInterface(HardwareInterface):
         self._sensors_stamp: float = 0.0
         self._battery: Optional[BatteryState] = None
         self._health = RobotHealthState(
-            ok=True, level='OK',
+            # A sim adapter is only a transport boundary.  Until the
+            # simulator injects sensor data, reporting OK would falsely claim
+            # that LiDAR/IMU/camera are healthy.
+            ok=False, level='WARN',
             imu_ready=False, lidar_ready=False,
             camera_ready=False, motion_ready=False,
             active_faults=['SIM_BACKEND_NO_DATA_INJECTED'],
@@ -92,6 +95,11 @@ class SimHardwareInterface(HardwareInterface):
             self._command_sink = sink
             self._sim_connected = sink is not None
             self._health.motion_ready = sink is not None
+            if sink is None:
+                self._health.ok = False
+                self._health.level = 'WARN'
+                if 'SIM_BACKEND_NO_SINK' not in self._health.active_faults:
+                    self._health.active_faults.append('SIM_BACKEND_NO_SINK')
 
     def set_sensor_readings(self, readings: SensorReadings):
         """注入外部仿真器的传感器读数"""
@@ -100,6 +108,10 @@ class SimHardwareInterface(HardwareInterface):
             self._sensors_stamp = time.time()
             self._health.imu_ready = True
             self._health.lidar_ready = True
+            if self._sim_connected:
+                self._health.ok = True
+                self._health.level = 'OK'
+                self._health.active_faults = []
 
     def set_battery(self, battery: BatteryState):
         """注入外部仿真器的电池状态"""

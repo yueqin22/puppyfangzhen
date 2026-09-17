@@ -225,7 +225,13 @@ class TrackCmdAdapterNode(Node):
         self.escape_clearance_factor = 1.15
 
     def _init_publishers_and_subscribers(self):
-        self.cmd_vel_safe_pub = self.create_publisher(Twist, "/cmd_vel_safe", 10)
+        # 严禁发布到 /cmd_vel_safe: 按 INTERFACES.md §1.1, 该话题的发布者只能是
+        # safety_manager (订阅者 motion_adapter), 它是"安全仲裁之后"的执行器输入。
+        # 本节点若直接发它, 就绕过了电机使能/限速/低电量/跌倒/命令超时急停,
+        # 且 dry-run 下会把未抑制的指令速度直接送到执行器。
+        # 监视用途走独立话题, 不接任何执行器。
+        self.cmd_vel_monitored_pub = self.create_publisher(
+            Twist, "/minicpm_robot/cmd_vel_monitored", 10)
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.safety_pub = self.create_publisher(String, "/minicpm_robot/safety_status", 10)
 
@@ -747,11 +753,11 @@ class TrackCmdAdapterNode(Node):
 
         twist_msg = self._build_twist(vx, status.commanded_vy, wz)
 
-        # In dry-run mode, cmd_vel_safe outputs commanded velocity for monitoring,
-        # but live cmd_vel is strictly suppressed to 0.
+        # In dry-run mode the monitored topic still carries the commanded velocity
+        # (for offline inspection), but live /cmd_vel is strictly suppressed to 0.
         if HAS_RCLPY:
-            if hasattr(self, 'cmd_vel_safe_pub'):
-                self.cmd_vel_safe_pub.publish(twist_msg)
+            if hasattr(self, 'cmd_vel_monitored_pub'):
+                self.cmd_vel_monitored_pub.publish(twist_msg)
 
             if hasattr(self, 'cmd_vel_pub'):
                 if self.mode in [TrackMode.SIM.value, TrackMode.LIVE_ARM.value]:

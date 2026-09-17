@@ -331,6 +331,11 @@ public:
             double dx_amcl = amcl_x - x;
             double dy_amcl = amcl_y - y;
             double d_amcl = std::sqrt(dx_amcl*dx_amcl + dy_amcl*dy_amcl);
+            // v3.2.19: 当 AMCL 估计与当前融合位姿偏差过大(>0.6m)时，极大概率是门道/对称假阳性簇跳变
+            // 衰减 alpha，防止将融合位姿拉入墙内或造成 >0.75m 尖峰
+            if (d_amcl > 0.6) {
+                alpha *= 0.2;
+            }
             double scale = 1.0;
             if (d_amcl > MAX_CORRECT) {
                 scale = MAX_CORRECT / d_amcl;
@@ -395,6 +400,12 @@ public:
     std::vector<CollisionDiagFrame> collision_diag_buf_;
     static const int COLLISION_DIAG_SIZE = 30;
 
+    // v3.2.19: flee 逃逸方向动量与反向振荡抑制
+    double last_flee_vx_ = 0.0;
+    double last_flee_vy_ = 0.0;
+    bool had_flee_last_frame_ = false;
+    int flee_hold_timer_ = 0;  // v3.2.20: 逃逸保持计时器 (消除 flee<->avoid 翻转振荡)
+
     // v3.2.15: 房间访问奖励机制
     //   记录每个房间的访问次数，跳点时优先选择未访问/少访问的房间
     //   目标: 提升房间覆盖率 8→9+，同时保持轮次效率
@@ -450,7 +461,10 @@ public:
         // M1.2: 支持 JSON 场景加载 (环境变量 SCENE_JSON 指定路径)
         //   设置 SCENE_JSON=config/scene_home.json 后，场景数据从 JSON 加载
         //   未设置时使用硬编码值（保持向后兼容）
-        const char* json_path = std::getenv("SCENE_JSON");
+        const char* configured_scene = std::getenv("SCENE_JSON");
+        std::string default_scene = scene_loader::find_scene_json();
+        const char* json_path = (configured_scene && *configured_scene)
+            ? configured_scene : (default_scene.empty() ? nullptr : default_scene.c_str());
         if (json_path && *json_path) {
             FILE* f = fopen(json_path, "rb");
             if (f) {
@@ -463,9 +477,8 @@ public:
                            json_path, obstacles.size(), patrol_targets.size(), pedestrians.size());
                 } catch (const std::exception& e) {
                     printf("[SCENE] JSON 加载失败(%s), 使用硬编码: %s\n", json_path, e.what());
-                    patrol_targets = build_patrol_targets();
-                    obstacles = build_obstacles();
-                    pedestrians = create_pedestrians();
+                    fprintf(stderr, "[SCENE] JSON load failed; refusing legacy hard-coded fallback: %s\n", e.what());
+                    throw;
                 }
             }
         }
@@ -553,6 +566,11 @@ public:
         // v3.2.14: 重置 IMU 融合状态
         imu_fusion_.initialized = false;
         imu_fusion_.vx = imu_fusion_.vy = imu_fusion_.vyaw = 0;
+        // v3.2.19: 重置 flee 逃逸状态
+        last_flee_vx_ = 0.0;
+        last_flee_vy_ = 0.0;
+        had_flee_last_frame_ = false;
+        flee_hold_timer_ = 0;
     }
 
     // v3.2.15: 房间访问奖励 - 跳点时选择最优下一个目标
@@ -627,29 +645,51 @@ public:
         return (target_idx + 1) % patrol_targets.size();
     }
 
-    // 获取CBF障碍物列表
-    std::vector<CBFObstacle> get_cbf_obstacles() {
+    // v3.2.19: 检查两点之间是否存在直视通视 (无实心静态障碍物阻隔)
+    bool has_line_of_sight(double x1, double y1, double x2, double y2) const {
+        double dx = x2 - x1, dy = y2 - y1;
+        double dist = std::sqrt(dx*dx + dy*dy);
+        if (dist < 1e-4) return true;
+        int steps = (int)(dist / 0.05) + 1;
+        for (int i = 1; i < steps; i++) {
+            double t = (double)i / steps;
+            double px = x1 + t * dx, py = y1 + t * dy;
+            for (const auto& obs : obstacles) {
+                if (px >= obs.xmin && px <= obs.xmax &&
+                    py >= obs.ymin && py <= obs.ymax) {
+                    return false;  // 被实心障碍物遮挡
+                }
+            }
+        }
+        return true;
+    }
+
+    // 获取CBF障碍物列表 (支持按直视通视过滤)
+    std::vector<CBFObstacle> get_cbf_obstacles(double rx = 1e9, double ry = 1e9) {
         std::vector<CBFObstacle> result;
-        for (auto& p : pedestrians)
+        for (auto& p : pedestrians) {
+            if (rx < 1e8 && !has_line_of_sight(rx, ry, p.x, p.y)) continue;
             result.push_back(CBFObstacle(p.x, p.y, p.radius));
+        }
         return result;
     }
 
-    // v3.2: 获取 RVO 障碍物列表 (含行人速度)
-    // 从仿真行人状态构造, vx/vy 是行人当前速度
-    std::vector<RVOObstacle> get_rvo_obstacles() {
+    // v3.2: 获取 RVO 障碍物列表 (含行人速度, 支持按直视通视过滤)
+    std::vector<RVOObstacle> get_rvo_obstacles(double rx = 1e9, double ry = 1e9) {
         std::vector<RVOObstacle> result;
         result.reserve(pedestrians.size());
         for (auto& p : pedestrians) {
+            if (rx < 1e8 && !has_line_of_sight(rx, ry, p.x, p.y)) continue;
             result.emplace_back(p.x, p.y, p.vx * FPS, p.vy * FPS, p.radius);
         }
         return result;
     }
 
-    // 最近行人距离
+    // 最近行人距离 (忽略实心墙壁遮挡的行人)
     double min_pedestrian_dist(double x, double y) {
         double min_d = 1e9;
         for (auto& p : pedestrians) {
+            if (!has_line_of_sight(x, y, p.x, p.y)) continue;
             double d = std::sqrt((x-p.x)*(x-p.x) + (y-p.y)*(y-p.y));
             if (d < min_d) min_d = d;
         }
@@ -675,6 +715,7 @@ public:
             double tx, double ty) {
         double min_next = 1e9;
         for (auto& p : pedestrians) {
+            if (!has_line_of_sight(step_x, step_y, p.x, p.y)) continue;
             double d = std::sqrt((step_x-p.x)*(step_x-p.x) + (step_y-p.y)*(step_y-p.y));
             if (d < min_next) min_next = d;
         }
@@ -699,6 +740,7 @@ public:
                 if (!candidate_is_safe(rx, ry, cx, cy)) continue;
                 double dyn_d = 1e9;
                 for (auto& p : pedestrians) {
+                    if (!has_line_of_sight(cx, cy, p.x, p.y)) continue;
                     double d = std::sqrt((cx-p.x)*(cx-p.x) + (cy-p.y)*(cy-p.y));
                     if (d < dyn_d) dyn_d = d;
                 }
@@ -926,6 +968,8 @@ public:
             step_y = ry;
             current_action = "wait_plan";
         }
+        double nav_tx = (current_path.size() >= 2) ? follow.first : tx;
+        double nav_ty = (current_path.size() >= 2) ? follow.second : ty;
 
         // === 三层防卡 ===
         stall_history.push_back({rx, ry});
@@ -980,6 +1024,7 @@ public:
         double min_pred_dist = 1e9;
         int n_close_peds = 0;  // v3.2.7: 2m 内行人数（多行人包围检测）
         for (auto& p : pedestrians) {
+            if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
             double cur_d = std::sqrt((robot_x-p.x)*(robot_x-p.x) + (robot_y-p.y)*(robot_y-p.y));
             // 预测位置: 行人速度 * FPS * horizon
             double pred_x = p.x + p.vx * FPS * predict_horizon;
@@ -1027,6 +1072,7 @@ public:
                 if (!candidate_is_safe(rx, ry, tx2, ty2)) continue;
                 double dyn_d = 1e9;
                 for (auto& p : pedestrians) {
+                    if (!has_line_of_sight(tx2, ty2, p.x, p.y)) continue;
                     double d = std::sqrt((tx2-p.x)*(tx2-p.x) + (ty2-p.y)*(ty2-p.y));
                     if (d < dyn_d) dyn_d = d;
                 }
@@ -1042,7 +1088,7 @@ public:
             double rvy = std::sin(recovery_dir) * params_.visual_max_speed;
             double sx, sy;
             // v3.2: 脱困时优先使用 CBF (RVO 在密集障碍中可能失败)
-            cbf.safety_filter(rvx, rvy, rx, ry, get_cbf_obstacles(), sx, sy);
+            cbf.safety_filter(rvx, rvy, rx, ry, get_cbf_obstacles(robot_x, robot_y), sx, sy);
             double spd = std::sqrt(sx*sx + sy*sy);
             if (spd > 1e-6) {
                 double ss = std::min(visual_max_step_, spd / FPS);
@@ -1067,11 +1113,11 @@ public:
                 rvo.max_speed = cbf.max_speed;  // 同步降速策略
                 rvo.compute_velocity(robot_x, robot_y, dec_yaw,
                                      last_vx, last_vy,
-                                     tx, ty,
-                                     get_rvo_obstacles(), sx, sy);
+                                     nav_tx, nav_ty,
+                                     get_rvo_obstacles(robot_x, robot_y), sx, sy);
             } else {
                 // CBF: 反应式避障
-                cbf.safety_filter(des_vx, des_vy, robot_x, robot_y, get_cbf_obstacles(), sx, sy);
+                cbf.safety_filter(des_vx, des_vy, robot_x, robot_y, get_cbf_obstacles(robot_x, robot_y), sx, sy);
             }
             double spd = std::sqrt(sx*sx + sy*sy);
 
@@ -1090,7 +1136,21 @@ public:
             double flee_speed = params_.visual_max_speed;  // v3.2.17: flee 速度（近距离降速）
             // v3.2.7: 用预测式 min_dist (与降速逻辑一致)
             double flee_check_dist = min_pred_dist;
-            if (flee_check_dist < 1.4 && spd < 0.5) {
+            // v3.2.20: 逃逸状态迟滞与保持定时器 (消除 flee<->avoid 翻转振荡)
+            // 触发条件: 预测接近 (flee_check_dist < 1.4) 且速度受阻/已减速 (spd < 0.5)
+            // 维持条件: 一旦触发，保持逃逸状态至少 20 帧 (~0.67s) 或直到预测距离安全 (>= 1.8m)
+            if (flee_check_dist < 1.4 && (spd < 0.5 || flee_hold_timer_ > 0)) {
+                flee_hold_timer_ = 20;
+            } else if (flee_hold_timer_ > 0) {
+                if (flee_check_dist >= 1.8) {
+                    flee_hold_timer_ = 0;
+                } else {
+                    flee_hold_timer_--;
+                }
+            }
+
+            bool enter_flee = (flee_hold_timer_ > 0 && flee_check_dist < 1.8);
+            if (enter_flee) {
                 // v3.2.6: 用真值位姿计算 flee（碰撞检测基于真值，flee 也应基于真值）
                 double true_min_dist = 1e9;
                 // v3.2.18e: 保存最近行人信息用于追逐检测（修复 is_chasing 永远 false 的 bug）
@@ -1098,6 +1158,7 @@ public:
                 double nearest_ped_vx = 0, nearest_ped_vy = 0;
                 double nearest_ped_px = 0, nearest_ped_py = 0;
                 for (auto& p : pedestrians) {
+                    if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
                     double d = std::sqrt((robot_x-p.x)*(robot_x-p.x) + (robot_y-p.y)*(robot_y-p.y));
                     if (d < true_min_dist) {
                         true_min_dist = d;
@@ -1105,7 +1166,8 @@ public:
                         nearest_ped_px = p.x; nearest_ped_py = p.y;
                     }
                 }
-                if (true_min_dist < 1.4) {
+                double flee_thresh = (flee_hold_timer_ > 0) ? 1.8 : 1.4;
+                if (true_min_dist < flee_thresh) {
                     // v3.2.6: 计算远离所有近距行人的合力方向
                     // v3.2.17: 用预测式行人位置（0.3秒后）计算 away 方向
                     //   原问题: 用当前位置计算 away，当行人移动时 away 方向与行人运动平行，
@@ -1115,10 +1177,11 @@ public:
                     double sum_fx = 0, sum_fy = 0;
                     int near_count = 0;
                     for (auto& p : pedestrians) {
+                        if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
                         double pred_px = p.x + p.vx * FPS * params_.prediction_short_time;
                         double pred_py = p.y + p.vy * FPS * params_.prediction_short_time;
                         double d = std::sqrt((robot_x-pred_px)*(robot_x-pred_px) + (robot_y-pred_py)*(robot_y-pred_py));
-                        if (d < 1.5) {
+                        if (d < 1.8) {
                             double w = (d > 0.01) ? 1.0 / d : 100.0;
                             sum_fx += w * (robot_x - pred_px) / std::max(d, 0.01);
                             sum_fy += w * (robot_y - pred_py) / std::max(d, 0.01);
@@ -1131,6 +1194,7 @@ public:
                     } else {
                         double nearest_d = 1e9, npx = 0, npy = 0;
                         for (auto& p : pedestrians) {
+                            if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
                             double d = std::sqrt((robot_x-p.x)*(robot_x-p.x) + (robot_y-p.y)*(robot_y-p.y));
                             if (d < nearest_d) { nearest_d = d; npx = p.x; npy = p.y; }
                         }
@@ -1171,55 +1235,79 @@ public:
                     if (near_count >= params_.flee_multi_count) flee_speed = params_.flee_speed_multi;
                     else if (true_min_dist < params_.flee_speed_near_thresh) flee_speed = params_.flee_speed_close;
                     else if (true_min_dist < params_.flee_speed_med_thresh) flee_speed = params_.flee_speed_medium;
-                    else flee_speed = params_.visual_max_speed;
-                    // v3.2.17: 扩展 flee 搜索方向 9→16，更密集覆盖
-                    std::vector<double> flee_offsets = {0, M_PI/8, -M_PI/8, M_PI/4, -M_PI/4,
-                                                       M_PI/2, -M_PI/2, 3*M_PI/4, -3*M_PI/4,
-                                                       M_PI/6, -M_PI/6, M_PI/3, -M_PI/3,
-                                                       5*M_PI/6, -5*M_PI/6, M_PI};
+                    else flee_speed = params_.flee_speed_close;
+                    // v3.2.17: 扩展 flee 搜索方向，密集覆盖背离行人半球与切向侧滑
+                    // v3.2.20: 包含切向脱困角(3PI/4, 5PI/6)，配合 approach_pen 惩罚，在墙角受阻时允许沿墙向侧方滑出
+                    std::vector<double> flee_offsets = {0, M_PI/12, -M_PI/12, M_PI/8, -M_PI/8,
+                                                       M_PI/6, -M_PI/6, M_PI/4, -M_PI/4,
+                                                       M_PI/3, -M_PI/3, 5*M_PI/12, -5*M_PI/12,
+                                                       M_PI/2, -M_PI/2,
+                                                       7*M_PI/12, -7*M_PI/12, 2*M_PI/3, -2*M_PI/3,
+                                                       3*M_PI/4, -3*M_PI/4, 5*M_PI/6, -5*M_PI/6};
                     double best_score = -1e9;
                     double best_fallback_score = -1e9;  // v3.2.17: 备选最佳（包围时用）
                     double best_fallback_vx = 0, best_fallback_vy = 0;
                     for (double off : flee_offsets) {
                         double cand_ang = away_ang + off;
+                        double cand_vx = std::cos(cand_ang) * flee_speed;
+                        double cand_vy = std::sin(cand_ang) * flee_speed;
                         // v3.2.6: 基于真值位姿检查安全性
                         double fx = robot_x + visual_max_step_ * std::cos(cand_ang);
                         double fy = robot_y + visual_max_step_ * std::sin(cand_ang);
                         if (!is_position_safe(fx, fy, obstacles)) continue;
-                        // v3.2.17: 评分用预测式行人位置（0.3秒后）+ 当前位置取最小值
-                        //   v3.2.18i+: 参数化预测时间 (任务 P1-2.4)
+
+                        // v3.2.19: 方向连续性 / 反向振荡抑制 (轻微加成，避免覆盖距离梯度)
+                        double dir_bonus = 0.0;
+                        if (had_flee_last_frame_) {
+                            double last_flee_spd = std::sqrt(last_flee_vx_*last_flee_vx_ + last_flee_vy_*last_flee_vy_);
+                            if (last_flee_spd > 1e-3) {
+                                double dot = (cand_vx * last_flee_vx_ + cand_vy * last_flee_vy_) / (flee_speed * last_flee_spd);
+                                dir_bonus = 0.15 * dot;
+                            }
+                        }
+
+                        // v3.2.19: 静态障碍物净空度评分
+                        double static_clr = 1e9;
+                        for (auto& obs : obstacles) {
+                            double ox = std::max(0.0, std::max(obs.xmin - fx, fx - obs.xmax));
+                            double oy = std::max(0.0, std::max(obs.ymin - fy, fy - obs.ymax));
+                            double od = std::sqrt(ox*ox + oy*oy);
+                            if (od < static_clr) static_clr = od;
+                        }
+                        double clr_bonus = 0.05 * std::min(0.5, static_clr);
+
+                        // v3.2.19: 靠近行人角度惩罚 (|off| > 90° 具有朝向行人的速度分量)
+                        double approach_pen = (std::abs(off) > M_PI/2) ? 1.5 * (std::abs(off) - M_PI/2) : 0.0;
+
+                        // v3.2.17: 评分用预测式行人位置（0.3秒后）与机器人逃逸前瞻位置
+                        double rfx = robot_x + std::cos(cand_ang) * flee_speed * params_.prediction_short_time;
+                        double rfy = robot_y + std::sin(cand_ang) * flee_speed * params_.prediction_short_time;
                         double dyn_d = 1e9;
                         for (auto& p : pedestrians) {
+                            if (!has_line_of_sight(fx, fy, p.x, p.y)) continue;
                             double cur_d = std::sqrt((fx-p.x)*(fx-p.x) + (fy-p.y)*(fy-p.y));
                             double pred_px = p.x + p.vx * FPS * params_.prediction_short_time;
                             double pred_py = p.y + p.vy * FPS * params_.prediction_short_time;
-                            double pred_d = std::sqrt((fx-pred_px)*(fx-pred_px) + (fy-pred_py)*(fy-pred_py));
+                            double pred_d = std::sqrt((rfx-pred_px)*(rfx-pred_px) + (rfy-pred_py)*(rfy-pred_py));
                             double eff_d = std::min(cur_d, pred_d);
                             if (eff_d < dyn_d) dyn_d = eff_d;
                         }
                         // v3.2.7: 拒绝 flee 后仍距行人 < 0.7m 的方向
                         if (dyn_d >= 0.7) {
-                            double score = dyn_d;
+                            double score = dyn_d + dir_bonus + clr_bonus - approach_pen;
                             if (score > best_score) {
                                 best_score = score;
-                                flee_vx = std::cos(cand_ang) * flee_speed;
-                                flee_vy = std::sin(cand_ang) * flee_speed;
+                                flee_vx = cand_vx;
+                                flee_vy = cand_vy;
                                 need_flee = true;
                             }
                         }
                         // v3.2.18h: fallback 评分 — 仅单行人强追逐用混合预测
-                        //   v3.2.18e: 所有追逐场景用混合预测 → seed6/10回归
-                        //   v3.2.18f: 完全不用混合预测 → seed8碰撞回归
-                        //   v3.2.18g: 强追逐(dot>0.8)用混合预测 → seed8修复但seed3碰撞
-                        //   seed3碰撞根因: 多行人夹击(person1+x,person2-x)时混合预测选不佳方向
-                        //   v3.2.18h: 仅near_count<2且强追逐时用混合预测
-                        //   seed8: 单行人强追逐→混合预测→垂直逃离→0碰撞
-                        //   seed3: 多行人夹击→保持0.3s→避免混合预测方向错误
-                        //   v3.2.18i+: 参数化预测时间 (任务 P1-2.4)
                         double fb_score;
                         if (is_strong_chasing && near_count < 2) {
                             double long_d = 1e9;
                             for (auto& p : pedestrians) {
+                                if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
                                 double lppx = p.x + p.vx * FPS * params_.prediction_long_time;
                                 double lppy = p.y + p.vy * FPS * params_.prediction_long_time;
                                 double lrfx = robot_x + std::cos(cand_ang) * flee_speed * params_.prediction_long_time;
@@ -1227,20 +1315,19 @@ public:
                                 double ld = std::sqrt((lrfx-lppx)*(lrfx-lppx) + (lrfy-lppy)*(lrfy-lppy));
                                 if (ld < long_d) long_d = ld;
                             }
-                            fb_score = 0.5 * dyn_d + 0.5 * long_d;
+                            fb_score = 0.5 * dyn_d + 0.5 * long_d + dir_bonus + clr_bonus - approach_pen;
                         } else {
-                            fb_score = dyn_d;
+                            fb_score = dyn_d + dir_bonus + clr_bonus - approach_pen;
                         }
                         if (fb_score > best_fallback_score) {
                             best_fallback_score = fb_score;
-                            best_fallback_vx = std::cos(cand_ang) * flee_speed;
-                            best_fallback_vy = std::sin(cand_ang) * flee_speed;
+                            best_fallback_vx = cand_vx;
+                            best_fallback_vy = cand_vy;
                         }
                     }
                     // v3.2.17: 被包围时不再停止，选择最佳可用方向
-                    //   原逻辑: 所有方向<0.7m→停止→被移动行人撞击
-                    //   新逻辑: 选择 1.0s 预测距离最大的方向逃离，移动比静止更安全
-                    if (!need_flee && best_fallback_score > 0) {
+                    // v3.2.20: 只要找到物理安全的逃逸方向即可采用，不要求 fb_score > 0
+                    if (!need_flee && best_fallback_score > -1e8) {
                         flee_vx = best_fallback_vx;
                         flee_vy = best_fallback_vy;
                         need_flee = true;
@@ -1250,28 +1337,41 @@ public:
 
             if (need_flee) {
                 // v3.2.17: flee 时用临时目标引导 RVO，而非绕过 RVO
-                //   原问题1: RVO compute_velocity 忽略 flee 方向，总是朝原目标计算
-                //   原问题2: 完全绕过 RVO 导致多行人场景无法考虑所有行人避障
-                //   修复: 设置临时目标 = 机器人 + flee方向 * 2.0m，让 RVO 朝 flee 方向
-                //   计算速度，同时 RVO 自然考虑所有行人的速度障碍
+                // v3.2.19: 统一使用真值位姿引导 RVO 与紧急逃逸
                 double flee_ang = std::atan2(flee_vy, flee_vx);
-                double temp_tx = rx + std::cos(flee_ang) * 2.0;
-                double temp_ty = ry + std::sin(flee_ang) * 2.0;
+                double temp_tx = robot_x + std::cos(flee_ang) * 2.0;
+                double temp_ty = robot_y + std::sin(flee_ang) * 2.0;
                 double fsx, fsy;
                 if (use_rvo_) {
                     // v3.2.17: flee 时用 flee_speed 覆盖 RVO max_speed（不取 min）
-                    //   原取 min(orig_max, flee_speed) 导致 cbf.max_speed=0.4 时机器人
-                    //   只能以0.4m/s逃离，被1.2m/s行人追上。flee 必须快于行人才能逃脱
                     double orig_max = rvo.max_speed;
                     rvo.max_speed = flee_speed;
-                    rvo.compute_velocity(rx, ry, dec_yaw,
+                    rvo.compute_velocity(robot_x, robot_y, robot_yaw,
                                          flee_vx, flee_vy, temp_tx, temp_ty,
-                                         get_rvo_obstacles(), fsx, fsy);
+                                         get_rvo_obstacles(robot_x, robot_y), fsx, fsy);
                     rvo.max_speed = orig_max;  // 恢复（下帧会重新设置）
                 } else {
-                    cbf.safety_filter(flee_vx, flee_vy, rx, ry, get_cbf_obstacles(), fsx, fsy);
+                    cbf.safety_filter(flee_vx, flee_vy, robot_x, robot_y, get_cbf_obstacles(robot_x, robot_y), fsx, fsy);
                 }
                 double fspd = std::sqrt(fsx*fsx + fsy*fsy);
+                if (fspd <= 1e-6) {
+                    // RVO 被全部锥覆盖降速为0时，仅当逃逸速度切实远离近距行人时，才强制执行
+                    bool away_from_peds = true;
+                    for (auto& p : pedestrians) {
+                        if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
+                        double to_px = p.x - robot_x, to_py = p.y - robot_y;
+                        double pd = std::sqrt(to_px*to_px + to_py*to_py);
+                        if (pd < 1.2 && (flee_vx * to_px + flee_vy * to_py) > 0) {
+                            away_from_peds = false; // 正在靠近近距行人，严禁强制推进
+                            break;
+                        }
+                    }
+                    if (away_from_peds) {
+                        fsx = flee_vx;
+                        fsy = flee_vy;
+                        fspd = std::sqrt(fsx*fsx + fsy*fsy);
+                    }
+                }
                 if (fspd > 1e-6) {
                     double ss = std::min(visual_max_step_, fspd / FPS);
                     double va = std::atan2(fsy, fsx);
@@ -1280,17 +1380,35 @@ public:
                     ang = va;
                 }
                 current_action = "flee";
-            } else if (spd > 1e-6) {
-                double ss = std::min(visual_max_step_, spd / FPS);
-                double va = std::atan2(sy, sx);
-                step_x = rx + ss * std::cos(va);
-                step_y = ry + ss * std::sin(va);
-                ang = va;
-                int risk = use_rvo_ ?
-                    rvo.get_risk_level(rx, ry, get_rvo_obstacles()) :
-                    cbf.get_risk_level(rx, ry, get_cbf_obstacles());
-                double changed = std::sqrt((sx-des_vx)*(sx-des_vx) + (sy-des_vy)*(sy-des_vy));
-                current_action = (risk > 0 || changed > 0.05) ? "avoid" : "cruise";
+                last_flee_vx_ = flee_vx;
+                last_flee_vy_ = flee_vy;
+                had_flee_last_frame_ = true;
+            } else {
+                had_flee_last_frame_ = false;
+                // v3.2.20: 逃逸维持期内若无法生成有效逃逸速度(如背靠死角墙体)，
+                // 严禁退出逃逸并向前冲刺！应原地安全制动(保持净空)，等待行人通过或威胁解除
+                if (flee_hold_timer_ > 0 && flee_check_dist < 1.8) {
+                    spd = 0.0;
+                    sx = 0.0;
+                    sy = 0.0;
+                    step_x = rx;
+                    step_y = ry;
+                    current_action = "flee";
+                } else {
+                    flee_hold_timer_ = 0;
+                    if (spd > 1e-6) {
+                        double ss = std::min(visual_max_step_, spd / FPS);
+                        double va = std::atan2(sy, sx);
+                        step_x = rx + ss * std::cos(va);
+                        step_y = ry + ss * std::sin(va);
+                        ang = va;
+                        int risk = use_rvo_ ?
+                            rvo.get_risk_level(rx, ry, get_rvo_obstacles(robot_x, robot_y)) :
+                            cbf.get_risk_level(rx, ry, get_cbf_obstacles(robot_x, robot_y));
+                        double changed = std::sqrt((sx-des_vx)*(sx-des_vx) + (sy-des_vy)*(sy-des_vy));
+                        current_action = (risk > 0 || changed > 0.05) ? "avoid" : "cruise";
+                    }
+                }
             }
         }
 
@@ -1307,37 +1425,92 @@ public:
             bool est_unsafe = !is_position_safe(step_x, step_y, obstacles);
             bool true_unsafe = !is_position_safe(true_step_x, true_step_y, obstacles);
             if (est_unsafe || true_unsafe) {
-                double goal_ang = std::atan2(ty - ry, tx - rx);
                 double attempted = std::sqrt((step_x-rx)*(step_x-rx) + (step_y-ry)*(step_y-ry));
                 double fallback = std::max(0.04, std::min(visual_max_step_, attempted));
                 std::vector<double> offsets = {0, M_PI/12, -M_PI/12, M_PI/6, -M_PI/6,
                                     M_PI/4, -M_PI/4, M_PI/3, -M_PI/3,
                                     M_PI/2, -M_PI/2, 2*M_PI/3, -2*M_PI/3, M_PI};
-                double best_score = 1e9;
                 bool found = false;
-                // v3.2.5: 从真值位姿出发尝试方向（真值位姿不会在墙内）
-                for (double base : std::vector<double>{goal_ang, ang}) {
-                    for (double off : offsets) {
-                        double alt_ang = base + off;
-                        double ax = robot_x + fallback * std::cos(alt_ang);
-                        double ay = robot_y + fallback * std::sin(alt_ang);
-                        if (!is_position_safe(ax, ay, obstacles)) continue;
-                        double tdist = std::sqrt((ax-tx)*(ax-tx) + (ay-ty)*(ay-ty));
-                        double tp = std::abs(std::atan2(std::sin(alt_ang-goal_ang), std::cos(alt_ang-goal_ang)));
-                        double score = tdist + 0.15 * tp;
-                        if (score < best_score) {
-                            best_score = score;
-                            // 转换回估计帧: step = rx + (true_pos - robot)
-                            step_x = rx + (ax - robot_x);
-                            step_y = ry + (ay - robot_y);
-                            ang = alt_ang;
-                            found = true;
+
+                if (current_action == "flee") {
+                    // v3.2.19: flee 逃逸碰墙时，严禁朝巡逻目标打转撞向行人！
+                    // 必须最大化与近距行人的距离
+                    double cur_ped_dist = 1e9;
+                    for (auto& p : pedestrians) {
+                        if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
+                        double d = std::sqrt((robot_x-p.x)*(robot_x-p.x) + (robot_y-p.y)*(robot_y-p.y));
+                        if (d < cur_ped_dist) cur_ped_dist = d;
+                    }
+                    double best_flee_dist = -1e9;
+                    double best_ax = robot_x, best_ay = robot_y, best_ang = ang;
+                    for (double base : std::vector<double>{ang, ang + M_PI/2, ang - M_PI/2}) {
+                        for (double off : offsets) {
+                            double alt_ang = base + off;
+                            double ax = robot_x + fallback * std::cos(alt_ang);
+                            double ay = robot_y + fallback * std::sin(alt_ang);
+                            if (!is_position_safe(ax, ay, obstacles)) continue;
+                            double dyn_d = 1e9;
+                            for (auto& p : pedestrians) {
+                                if (!has_line_of_sight(ax, ay, p.x, p.y)) continue;
+                                double d = std::sqrt((ax-p.x)*(ax-p.x) + (ay-p.y)*(ay-p.y));
+                                if (d < dyn_d) dyn_d = d;
+                            }
+                            if (dyn_d > best_flee_dist) {
+                                best_flee_dist = dyn_d;
+                                best_ax = ax;
+                                best_ay = ay;
+                                best_ang = alt_ang;
+                                found = true;
+                            }
                         }
                     }
-                }
-                if (!found) {
-                    // 所有方向都不安全，保持原位（基于真值位姿）
-                    step_x = rx; step_y = ry;
+                    // v3.2.20: 仅当候选方向不缩短与行人距离且在安全半径之外时才移动；
+                    // 否则贴墙原地停住，绝不反向朝行人推进
+                    if (found && best_flee_dist >= cur_ped_dist && best_flee_dist > params_.dyn_collision_radius) {
+                        step_x = rx + (best_ax - robot_x);
+                        step_y = ry + (best_ay - robot_y);
+                        ang = best_ang;
+                    } else {
+                        // 任何移动都会缩短与行人的距离，贴墙原地停住，不反向冲向行人
+                        step_x = rx;
+                        step_y = ry;
+                    }
+                } else {
+                    double goal_ang = std::atan2(nav_ty - ry, nav_tx - rx);
+                    double best_score = 1e9;
+                    // v3.2.5: 从真值位姿出发尝试方向（真值位姿不会在墙内）
+                    for (double base : std::vector<double>{goal_ang, ang}) {
+                        for (double off : offsets) {
+                            double alt_ang = base + off;
+                            double ax = robot_x + fallback * std::cos(alt_ang);
+                            double ay = robot_y + fallback * std::sin(alt_ang);
+                            if (!is_position_safe(ax, ay, obstacles)) continue;
+                            // 绕墙候选点不得离行人过近 (<0.6m)
+                            double dyn_d = 1e9;
+                            for (auto& p : pedestrians) {
+                                if (!has_line_of_sight(ax, ay, p.x, p.y)) continue;
+                                double d = std::sqrt((ax-p.x)*(ax-p.x) + (ay-p.y)*(ay-p.y));
+                                if (d < dyn_d) dyn_d = d;
+                            }
+                            if (dyn_d < 0.6) continue;
+
+                            double tdist = std::sqrt((ax-nav_tx)*(ax-nav_tx) + (ay-nav_ty)*(ay-nav_ty));
+                            double tp = std::abs(std::atan2(std::sin(alt_ang-goal_ang), std::cos(alt_ang-goal_ang)));
+                            double score = tdist + 0.15 * tp;
+                            if (score < best_score) {
+                                best_score = score;
+                                // 转换回估计帧: step = rx + (true_pos - robot)
+                                step_x = rx + (ax - robot_x);
+                                step_y = ry + (ay - robot_y);
+                                ang = alt_ang;
+                                found = true;
+                            }
+                        }
+                    }
+                    if (!found) {
+                        // 所有方向都不安全，保持原位（基于真值位姿）
+                        step_x = rx; step_y = ry;
+                    }
                 }
             }
         }
@@ -1347,11 +1520,14 @@ public:
         // v3.2.5: 使用真值位姿 robot_x, robot_y 做动态避障（行人位置是真值）
         if (recovery_mode) {
             // 信任CBF
+        } else if (current_action == "flee") {
+            // v3.2.19: 信任 flee/RVO 紧急逃逸决策，不被针对巡逻目标的 apply_dynamic_clearance 覆盖
         } else if (stall_timer > 40) {
             double min_next = 1e9;
             double true_step_x = robot_x + (step_x - rx);
             double true_step_y = robot_y + (step_y - ry);
             for (auto& p : pedestrians) {
+                if (!has_line_of_sight(true_step_x, true_step_y, p.x, p.y)) continue;
                 double d = std::sqrt((true_step_x-p.x)*(true_step_x-p.x) + (true_step_y-p.y)*(true_step_y-p.y));
                 if (d < min_next) min_next = d;
             }
@@ -1445,6 +1621,7 @@ public:
             // 找最近行人
             double nearest_d = 1e9;
             for (auto& p : pedestrians) {
+                if (!has_line_of_sight(robot_x, robot_y, p.x, p.y)) continue;
                 double d = std::sqrt((robot_x-p.x)*(robot_x-p.x) + (robot_y-p.y)*(robot_y-p.y));
                 if (d < nearest_d) {
                     nearest_d = d;
@@ -1463,24 +1640,26 @@ public:
         for (auto& p : pedestrians) {
             double d = std::sqrt((robot_x-p.x)*(robot_x-p.x) + (robot_y-p.y)*(robot_y-p.y));
             if (d < params_.dyn_collision_radius) {
-                if (collision_hysteresis.find(p.name) == collision_hysteresis.end()) {
-                    collision_hysteresis[p.name] = true;
-                    total_collisions++;
-                    printf("[COLLISION] frame=%d robot=(%.2f,%.2f) %s at (%.2f,%.2f) dist=%.3f action=%s\n",
-                           frame, robot_x, robot_y, p.name.c_str(), p.x, p.y, d, current_action.c_str());
-                    // v3.2.17: 打印碰撞前30帧诊断信息
-                    printf("[COLLISION_DIAG] === 碰撞前 %d 帧回溯 ===\n", (int)collision_diag_buf_.size());
-                    for (auto& df : collision_diag_buf_) {
-                        double ped_rel_x = df.ped_x - df.rx;
-                        double ped_rel_y = df.ped_y - df.ry;
-                        double closing = -(ped_rel_x * df.ped_vx + ped_rel_y * df.ped_vy) /
-                                         std::max(0.01, std::sqrt(ped_rel_x*ped_rel_x + ped_rel_y*ped_rel_y));
-                        printf("[COLLISION_DIAG] f=%d true=(%.2f,%.2f) dec=(%.2f,%.2f) conf=%.2f spd=%.2f min_d=%.2f ped=(%.2f,%.2f) pv=(%.3f,%.3f) close=%.3f act=%s\n",
-                               df.frame, df.rx, df.ry, df.dx, df.dy, df.conf, df.spd, df.min_ped_d,
-                               df.ped_x, df.ped_y, df.ped_vx, df.ped_vy, closing, df.action.c_str());
+                if (has_line_of_sight(robot_x, robot_y, p.x, p.y)) {
+                    if (collision_hysteresis.find(p.name) == collision_hysteresis.end()) {
+                        collision_hysteresis[p.name] = true;
+                        total_collisions++;
+                        printf("[COLLISION] frame=%d robot=(%.2f,%.2f) %s at (%.2f,%.2f) dist=%.3f action=%s\n",
+                               frame, robot_x, robot_y, p.name.c_str(), p.x, p.y, d, current_action.c_str());
+                        // v3.2.17: 打印碰撞前30帧诊断信息
+                        printf("[COLLISION_DIAG] === 碰撞前 %d 帧回溯 ===\n", (int)collision_diag_buf_.size());
+                        for (auto& df : collision_diag_buf_) {
+                            double ped_rel_x = df.ped_x - df.rx;
+                            double ped_rel_y = df.ped_y - df.ry;
+                            double closing = -(ped_rel_x * df.ped_vx + ped_rel_y * df.ped_vy) /
+                                             std::max(0.01, std::sqrt(ped_rel_x*ped_rel_x + ped_rel_y*ped_rel_y));
+                            printf("[COLLISION_DIAG] f=%d true=(%.2f,%.2f) dec=(%.2f,%.2f) conf=%.2f spd=%.2f min_d=%.2f ped=(%.2f,%.2f) pv=(%.3f,%.3f) close=%.3f act=%s\n",
+                                   df.frame, df.rx, df.ry, df.dx, df.dy, df.conf, df.spd, df.min_ped_d,
+                                   df.ped_x, df.ped_y, df.ped_vx, df.ped_vy, closing, df.action.c_str());
+                        }
+                        printf("[COLLISION_DIAG] === 回溯结束 ===\n");
+                        collision_diag_buf_.clear();  // 清空避免重复打印
                     }
-                    printf("[COLLISION_DIAG] === 回溯结束 ===\n");
-                    collision_diag_buf_.clear();  // 清空避免重复打印
                 }
             } else if (d > params_.dyn_collision_radius + 0.3) {
                 collision_hysteresis.erase(p.name);

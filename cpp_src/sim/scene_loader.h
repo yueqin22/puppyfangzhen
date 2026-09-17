@@ -28,6 +28,7 @@ inline std::string find_scene_json() {
         "../config/scene_home.json",
         "../../config/scene_home.json",
         "../../../config/scene_home.json",
+        "../../../../config/scene_home.json",
         nullptr
     };
     for (int i = 0; candidates[i]; ++i) {

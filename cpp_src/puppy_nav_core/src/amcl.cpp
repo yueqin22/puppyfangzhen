@@ -201,6 +201,9 @@ void AMCL::init_cloud(double x, double y, double yaw, double spread) {
     }
 
     converged = false;
+    cluster_initialized_ = false;
+    cluster_prev_x_ = x;
+    cluster_prev_y_ = y;
 }
 
 // ===========================================================================
@@ -228,6 +231,9 @@ std::string AMCL::recover(double x, double y, double yaw,
     particles_.assign(n_recover, {0.0, 0.0, 0.0});
     n = n_recover;
     n_active = n_recover;
+    cluster_initialized_ = false;
+    cluster_prev_x_ = x;
+    cluster_prev_y_ = y;
 
     // 保留 20% 粒子在当前估计附近（以防当前估计是对的）
     int n_keep = std::max(n_recover / 5, 10);
@@ -1610,7 +1616,13 @@ std::tuple<double, double, double, double> AMCL::get_cluster_estimate() const {
     //   原理: 地图外位置物理不可能(粒子不能跑到地图外)，墙内可能是
     //   机器人贴墙行驶的正常状态
     //   效果: seed 6 (0.10,4.16) y=4.16>4.0 被拒→A* 81%→99.8%
-    size_t best_idx = 0;
+    struct ValidCluster {
+        size_t cluster_idx;
+        double cx, cy;
+        double weight_sum;
+        double dist_to_prev;
+    };
+    std::vector<ValidCluster> valid_clusters;
     for (size_t ci = 0; ci < clusters.size(); ci++) {
         double cx = 0, cy = 0, cw = 0;
         for (int pi : clusters[ci].indices) {
@@ -1622,8 +1634,37 @@ std::tuple<double, double, double, double> AMCL::get_cluster_estimate() const {
         int gx, gy;
         grid_.world_to_grid(cx, cy, gx, gy);
         if (grid_.is_in_bounds(gx, gy)) {
-            best_idx = ci;
-            break;
+            double d_prev = cluster_initialized_ ?
+                std::sqrt((cx - cluster_prev_x_)*(cx - cluster_prev_x_) +
+                          (cy - cluster_prev_y_)*(cy - cluster_prev_y_)) : 0.0;
+            valid_clusters.push_back({ci, cx, cy, clusters[ci].weight_sum, d_prev});
+        }
+    }
+    if (valid_clusters.empty()) {
+        return {0.0, 0.0, 0.0, 0.0};
+    }
+
+    size_t best_idx = valid_clusters[0].cluster_idx;
+    if (cluster_initialized_) {
+        // 跟踪连续性门控: 检查是否存在与上一帧估计位姿连续的簇 (< 0.8m)
+        // 机器人一帧内物理移动最多 ~0.067m (2m/s @30fps)
+        // 门道/对称走廊处，远端可能因对称性形成伪似然簇(权重略高)，导致估计位姿瞬间跳变1.8m+
+        // 若连续簇存在且权重非微不足道(>= 最高权重的 10%)，优先维持跟踪连续性，防止幻觉漂移
+        const double TRACK_GATE = 0.8;
+        int continuity_idx = -1;
+        double max_cont_w = -1.0;
+        for (const auto& vc : valid_clusters) {
+            if (vc.dist_to_prev <= TRACK_GATE) {
+                if (vc.weight_sum > max_cont_w) {
+                    max_cont_w = vc.weight_sum;
+                    continuity_idx = (int)vc.cluster_idx;
+                }
+            }
+        }
+        if (continuity_idx >= 0 && max_cont_w >= 0.10 * valid_clusters[0].weight_sum) {
+            best_idx = (size_t)continuity_idx;
+        } else {
+            best_idx = valid_clusters[0].cluster_idx;
         }
     }
     auto& best = clusters[best_idx].indices;

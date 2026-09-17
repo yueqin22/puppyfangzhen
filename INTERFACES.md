@@ -52,6 +52,7 @@
 | `/robot/posture_cmd` | `std_msgs/String` | 外部 | mode_adapter | 姿态命令(STAND/SIT/...) |
 | `/robot/motors_enable_request` | `std_msgs/Bool` | 外部 | safety_manager | 电机使能请求 |
 | `/robot/motion_enable` | `std_msgs/Bool` | safety_manager | motion_adapter | 运动使能 |
+| `/watchdog/emergency_stop` | `std_msgs/Bool` | watchdog | safety_manager | true 时立即零速并断开电机使能 |
 
 ### 1.6 导航目标
 

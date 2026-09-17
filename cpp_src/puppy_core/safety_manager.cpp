@@ -47,6 +47,12 @@ SafetyManagerNode::SafetyManagerNode() : rclcpp::Node("safety_manager") {
       "/robot/motors_enable_request", 10,
       std::bind(&SafetyManagerNode::onMotorRequest, this,
                 std::placeholders::_1));
+  // 看门狗急停: 与 Python 侧 safety_manager 保持一致 (py/cpp 行为对齐)。
+  // 此前仲裁者未订阅它, 看门狗急停无法作用到执行器。
+  emergency_stop_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+      "/watchdog/emergency_stop", 10,
+      std::bind(&SafetyManagerNode::onEmergencyStop, this,
+                std::placeholders::_1));
 
   // Safety check timer (20Hz)
   timer_ = this->create_wall_timer(
@@ -82,6 +88,18 @@ void SafetyManagerNode::onBattery(
   if (msg->critical_battery) {
     RCLCPP_ERROR(this->get_logger(), "Critical battery! Entering SAFE_STOP");
     motors_enabled_ = false;
+    publishMotorEnable();
+  }
+}
+
+void SafetyManagerNode::onEmergencyStop(
+    const std_msgs::msg::Bool::SharedPtr msg) {
+  // Watchdog emergency stop: cut motor enable and publish zero velocity.
+  if (msg->data) {
+    RCLCPP_ERROR(this->get_logger(), "Watchdog EMERGENCY STOP -> SAFE_STOP");
+    motors_enabled_ = false;
+    geometry_msgs::msg::Twist zero;
+    safe_cmd_pub_->publish(zero);
     publishMotorEnable();
   }
 }

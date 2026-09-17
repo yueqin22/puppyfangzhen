@@ -18,11 +18,19 @@ class StatusAdapterNode(Node):
         super().__init__('status_adapter')
 
         self.declare_parameter('use_sim', True)
+        # ``backend`` is the explicit contract-facing selector.  Keep
+        # ``use_sim`` for backwards-compatible launch files, but never infer
+        # a real backend failure as permission to switch to mock.
+        self.declare_parameter('backend', '')
+        self.declare_parameter('allow_backend_fallback', False)
         self.declare_parameter('publish_raw_battery', True)
         self.declare_parameter('publish_semantic_battery', True)
         self.declare_parameter('battery_drain_per_tick', 0.0002)
 
         self.use_sim = bool(self.get_parameter('use_sim').value)
+        configured_backend = str(self.get_parameter('backend').value or '').strip().lower()
+        self.allow_backend_fallback = bool(
+            self.get_parameter('allow_backend_fallback').value)
         self.publish_raw_battery = bool(
             self.get_parameter('publish_raw_battery').value
         )
@@ -48,31 +56,49 @@ class StatusAdapterNode(Node):
         self.battery_semantic_pub = self.create_publisher(BatteryStatus, '/battery_status', 10)
 
         self.hw = None
-        backend = 'sim' if self.use_sim else 'real'
+        backend = configured_backend or ('sim' if self.use_sim else 'real')
+        if backend not in ('mock', 'sim', 'real'):
+            raise ValueError(
+                f"Unsupported status adapter backend '{backend}'; expected mock, sim, or real")
         try:
             from .hardware_interface import HardwareInterface
-            self.hw = HardwareInterface.create({'backend': backend})
-            self.sdk_connected = self.hw.initialize()
+            self.hw = HardwareInterface.create({
+                'backend': backend,
+                'allow_backend_fallback': self.allow_backend_fallback,
+            })
+            self.sdk_connected = bool(self.hw.initialize())
             if not self.sdk_connected:
-                self.get_logger().warn(f'HardwareInterface ({backend}) initialization returned False, falling back to mock')
-                self.hw = HardwareInterface.create({'backend': 'mock'})
-                self.hw.initialize()
+                raise RuntimeError(
+                    f'HardwareInterface ({backend}) initialization returned False')
         except Exception as exc:
-            self.get_logger().warn(
-                f'Failed to initialize HardwareInterface ({backend}): {exc}. Falling back to mock interface.'
-            )
-            try:
-                from .hardware_interface import HardwareInterface
+            # A real/sim backend is an explicit deployment choice.  Falling
+            # back to mock hides disconnected sensors and makes a safety
+            # demonstration invalid, so fail-fast unless a caller explicitly
+            # opts into fallback (and records that choice in its launch).
+            if self.allow_backend_fallback:
+                self.get_logger().warning(
+                    f'HardwareInterface ({backend}) failed: {exc}; '
+                    'explicit allow_backend_fallback=true -> using mock')
                 self.hw = HardwareInterface.create({'backend': 'mock'})
-                self.hw.initialize()
-            except Exception as mock_exc:
-                self.get_logger().error(f'Mock HardwareInterface initialization failed: {mock_exc}')
-                self.hw = None
+                self.sdk_connected = bool(self.hw.initialize())
+                self.backend_actual = 'mock'
+            else:
+                self.get_logger().fatal(
+                    f'HardwareInterface ({backend}) unavailable: {exc}; '
+                    'refusing silent mock fallback')
+                raise
+
+        self.backend_requested = backend
+        self.backend_actual = getattr(self, 'backend_actual', backend)
 
         self.create_timer(0.05, self._poll_status)
 
-        mode_tag = '[SIM]' if self.use_sim else ('[HARDWARE]' if self.sdk_connected else '[FALLBACK-MOCK]')
-        self.get_logger().info(f'Status adapter started {mode_tag}')
+        mode_tag = {'sim': '[SIM]', 'real': '[HARDWARE]', 'mock': '[MOCK]'}[
+            self.backend_actual]
+        self.get_logger().info(
+            f'Status adapter started {mode_tag} '
+            f'(backend_requested={self.backend_requested}, '
+            f'backend_actual={self.backend_actual})')
 
     def _poll_status(self):
         """Poll PuppyPi for status and publish to ROS2."""
