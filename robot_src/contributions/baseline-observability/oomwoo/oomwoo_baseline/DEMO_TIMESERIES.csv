@@ -1,0 +1,4 @@
+elapsed_sec,scan_rate_hz,tf_p99_ms,odom_integrated_m,bumper_total,cmd_vel_stale
+3.1,5.0,17.4,0.56,1,0
+6.1,5.0,17.07,1.16,1,0
+9.1,5.0,16.74,1.76,1,0

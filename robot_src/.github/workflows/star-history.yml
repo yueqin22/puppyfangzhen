@@ -1,0 +1,47 @@
+name: Star history chart
+
+# Regenerate the self-hosted star-history SVGs (light + dark) from the GitHub
+# API using the repo's own token — no third-party embed and no "sealed token"
+# to expire. Commits the SVGs only when they change.
+
+on:
+  schedule:
+    # Twice a week: Monday and Thursday 06:17 UTC. GitHub's scheduler is
+    # best-effort and routinely runs 1-4 h late, so treat these as "some time
+    # that morning", not as a deadline. The job only commits when the SVG
+    # actually changes, so a week with no new stars produces no commit -- that
+    # is the workflow working, not failing.
+    - cron: '17 6 * * 1,4'
+  workflow_dispatch:            # manual "Run workflow" button
+
+permissions:
+  contents: write
+
+concurrency:
+  group: star-history
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate star-history SVGs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STAR_HISTORY_REPO: ${{ github.repository }}
+        run: python3 .github/scripts/gen_star_history.py
+
+      - name: Commit if changed
+        run: |
+          if [ -n "$(git status --porcelain .github/assets)" ]; then
+            git config user.name  'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add .github/assets/star-history-light.svg \
+                    .github/assets/star-history-dark.svg
+            git commit -m 'chore: refresh star-history chart [skip ci]'
+            git push
+          else
+            echo 'star-history unchanged'
+          fi

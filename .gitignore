@@ -88,6 +88,9 @@ robot_src/
 # WorkBuddy 项目记忆（含本地备忘，绝不入库）
 .workbuddy/
 
+# Local nested-repository metadata kept outside the published source tree
+.nested_git_metadata_backup/
+
 # C++ 离线仿真构建/运行产物 (cpp_src)
 cpp_src/**/build/
 cpp_src/build_all/

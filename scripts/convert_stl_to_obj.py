@@ -68,7 +68,11 @@ def convert_stl_to_obj(stl_path, obj_path):
     return True
 
 def main():
-    src_dir = r"C:\Users\Administrator\.gemini\antigravity\brain\6b6f1636-d5ec-4d75-96ae-5554f8d8f5b7\scratch\PuppyPi\src\simulations\puppypi_description\meshes"
+    # Set PUPPYPI_MESH_SRC when the STL assets live outside this checkout.
+    src_dir = os.environ.get(
+        "PUPPYPI_MESH_SRC",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "puppy_pi", "stl"),
+    )
     out_dirs = [
         r"E:\puppyfangzhen\models\puppy_pi",
         r"D:\puppy_ue\Content\PuppyPi"

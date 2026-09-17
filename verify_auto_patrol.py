@@ -124,7 +124,10 @@ def run_auto_patrol_verification():
     print("=" * 60)
 
     # 闁诲繐绻愬Λ娑㈠极閹捐绠ｉ柟閭﹀枟閻ｉ亶鏌熼懜鍨碍闁活偄妫欏鍕吋閸涱厾鍘梺?artifacts 闂佺儵鏅╅崰鏍礊?
-    target_artifact_dir = r"C:\Users\Administrator\.gemini\antigravity\brain\9f43f43f-3ac5-4496-9072-844d8264c252"
+    target_artifact_dir = os.environ.get(
+        "PUPPY_ARTIFACT_DIR", os.path.join(os.path.dirname(__file__), "artifacts", "auto_patrol")
+    )
+    os.makedirs(target_artifact_dir, exist_ok=True)
     for snap in snapshots:
         if os.path.exists(snap['image_path']):
             shutil.copy(snap['image_path'], target_artifact_dir)

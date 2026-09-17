@@ -21,7 +21,9 @@ def capture():
         print("[Capture] Overview camera spawned at", cam_loc)
     
     # Take high res screenshot
-    out_dir = r"C:\Users\Administrator\.gemini\antigravity\brain\9f43f43f-3ac5-4496-9072-844d8264c252"
+    # Keep captures in a configurable, project-local directory by default.
+    out_dir = os.environ.get("UE_SCREENSHOT_DIR", os.path.join(os.getcwd(), "screenshots"))
+    os.makedirs(out_dir, exist_ok=True)
     filename = os.path.join(out_dir, "ue_home_scene_overview.png")
     
     unreal.AutomationLibrary.take_high_res_screenshot(1920, 1080, filename)

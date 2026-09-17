@@ -1,0 +1,46 @@
+{
+  "bumper": {
+    "left_events": 1,
+    "right_events": 0,
+    "total_events": 1
+  },
+  "cmd_vel": {
+    "samples": 48,
+    "stale_events": 0,
+    "stale_threshold_sec": 0.5
+  },
+  "map": {
+    "free_ratio": 0.9421,
+    "height": 100,
+    "unknown_ratio": 0.0183,
+    "width": 100
+  },
+  "odom": {
+    "count": 48,
+    "drift_ratio": 0.9999908538574862,
+    "integrated_distance_m": 1.8799828052520755,
+    "pose_distance_m": 1.8800000000000014
+  },
+  "recovery": {
+    "max_ms": NaN,
+    "mean_ms": NaN,
+    "n": 0,
+    "p95_ms": NaN
+  },
+  "scan": {
+    "count": 48,
+    "expected_min_rate_hz": 5.0,
+    "meets_target": true,
+    "rate_hz": 5.00004573113083
+  },
+  "status_transitions": 0,
+  "tf_latency": {
+    "max_ms": 17.70472526550293,
+    "mean_ms": 14.489993453025818,
+    "n": 48,
+    "p50_ms": 14.39058780670166,
+    "p95_ms": 14.945828914642334,
+    "p99_ms": 16.669209003448486
+  },
+  "wall_duration_sec": 9.40107274055481
+}

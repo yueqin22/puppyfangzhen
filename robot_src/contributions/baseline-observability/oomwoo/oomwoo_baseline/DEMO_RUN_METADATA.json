@@ -1,0 +1,15 @@
+{
+  "captured_at_utc": "2026-08-27T22:18:49.643568+00:00",
+  "config_file": "",
+  "extra": {},
+  "git_sha": "045cc6b9b15ded7888009a62c623842fdea5c062",
+  "hardware_note": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "lidar_target_hz": 5.0,
+  "python_version": "3.10.12",
+  "rmw_implementation": "unknown",
+  "ros_distro": "humble",
+  "ros_domain_id": "unknown",
+  "scenario": "",
+  "seed": 0,
+  "use_sim_time": "true"
+}
